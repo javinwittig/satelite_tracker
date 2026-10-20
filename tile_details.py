@@ -92,7 +92,7 @@ class TileDetails(QWidget):
         self.selected_pass = None
         self.view3d = None
 
-        self.setWindowTitle(f"Satelliten & Detailansicht: Tile ({x}, {y})")
+        self.setWindowTitle(f"Satellites & detail view: Tile ({x}, {y})")
         self.resize(1020, 680)
 
         main_layout = QHBoxLayout()
@@ -114,13 +114,13 @@ class TileDetails(QWidget):
         os.makedirs(os.path.join(base, "map_tiles"), exist_ok=True)
         path = os.path.join(base, "map_tiles", f"map_{x * RESOLUTION}_{y * RESOLUTION}.jpg")
 
-        self.image_label = QLabel("Lade NASA-Satellitenbild...")
+        self.image_label = QLabel("Loading NASA satellite image...")
         self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.image_label.setFixedSize(400, 400)
         self.image_label.setStyleSheet("background-color: #1e1e1e; border: 1px solid #444; border-radius: 4px;")
 
         # Weather card overview
-        self.weather_card = QLabel("Lade Wetter- & Wolkenprognose...")
+        self.weather_card = QLabel("Loading weather & cloud forecast...")
         self.weather_card.setWordWrap(True)
         self.weather_card.setStyleSheet(
             "background-color: #2b2b2b; color: #ddd; padding: 10px; border-radius: 4px; font-size: 12px;"
@@ -133,9 +133,9 @@ class TileDetails(QWidget):
         left_panel.setLayout(left_layout)
         left_panel.setFixedWidth(410)
 
-        # =======================================================
+
         # RIGHT PANEL: Satellite Passes, Filters, Details, 3D
-        # =======================================================
+
         right_panel = QWidget()
         right_layout = QVBoxLayout()
         right_layout.setContentsMargins(0, 0, 0, 0)
@@ -143,9 +143,9 @@ class TileDetails(QWidget):
 
         # Header with title & stats
         header_layout = QHBoxLayout()
-        self.sat_title = QLabel("<b>Satelliten-Überflüge (nächste 48 h):</b>")
+        self.sat_title = QLabel("<b>Satellite passes (next 48 h):</b>")
         self.sat_title.setStyleSheet("font-size: 15px;")
-        self.sat_count_label = QLabel("Berechne Überflüge...")
+        self.sat_count_label = QLabel("Calculating passes...")
         self.sat_count_label.setStyleSheet("color: #888; font-size: 12px;")
         header_layout.addWidget(self.sat_title)
         header_layout.addStretch()
@@ -160,12 +160,12 @@ class TileDetails(QWidget):
         filter_layout.setSpacing(6)
 
         filter_row1 = QHBoxLayout()
-        self.chk_visible = QCheckBox("Nur sichtbare Überflüge (≥10° Höhe, Sonne unter Horizont, beleuchtet)")
+        self.chk_visible = QCheckBox("Only visible passes (≥10° elevation, sun below horizon, illuminated)")
         self.chk_visible.setChecked(True)
         self.chk_visible.setStyleSheet("font-weight: bold; color: #4cd137;")
         self.chk_visible.toggled.connect(self.apply_filter)
 
-        self.chk_favorites_only = QCheckBox("Nur Favoriten (ISS, Hubble, Tiangong)")
+        self.chk_favorites_only = QCheckBox("Only favorites (ISS, Hubble, Tiangong)")
         self.chk_favorites_only.setChecked(False)
         self.chk_favorites_only.toggled.connect(self.apply_filter)
 
@@ -175,10 +175,10 @@ class TileDetails(QWidget):
         filter_row1.addStretch()
 
         filter_row2 = QHBoxLayout()
-        search_lbl = QLabel("Suche:")
+        search_lbl = QLabel("Search:")
         search_lbl.setStyleSheet("color: #aaa;")
         self.txt_search = QLineEdit()
-        self.txt_search.setPlaceholderText("Nach Satellit oder NORAD suchen...")
+        self.txt_search.setPlaceholderText("Search satellite or NORAD...")
         self.txt_search.textChanged.connect(self.apply_filter)
         self.txt_search.setStyleSheet("padding: 4px; border-radius: 3px;")
 
@@ -191,7 +191,7 @@ class TileDetails(QWidget):
 
         # Satellite list
         self.sat_list = QListWidget()
-        self.sat_list.addItem("Lade Satelliten & Wolkenprognose...")
+        self.sat_list.addItem("Loading satellites & cloud forecast...")
         self.sat_list.itemClicked.connect(self.show_details)
         self.sat_list.setStyleSheet(
             "QListWidget { background-color: #23272a; color: #ecf0f1; border: 1px solid #444; border-radius: 4px; padding: 4px; font-family: Consolas, monospace; }"
@@ -201,7 +201,7 @@ class TileDetails(QWidget):
         right_layout.addWidget(self.sat_list, stretch=2)
 
         # Pass Details card
-        self.details_label = QLabel("Klicke auf einen Überflug für detaillierte Sichtbarkeits- und Bahndaten.")
+        self.details_label = QLabel("Click a pass for detailed visibility and orbit data.")
         self.details_label.setWordWrap(True)
         self.details_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         self.details_label.setStyleSheet(
@@ -210,7 +210,7 @@ class TileDetails(QWidget):
         right_layout.addWidget(self.details_label, stretch=1)
 
         # 3D View button
-        self.btn_3d = QPushButton("In 3D-Globus öffnen")
+        self.btn_3d = QPushButton("Open 3D globe")
         self.btn_3d.setEnabled(False)
         self.btn_3d.setMinimumHeight(34)
         self.btn_3d.setStyleSheet(
@@ -252,7 +252,7 @@ class TileDetails(QWidget):
         )
 
     def show_error(self):
-        self.image_label.setText("NASA-Bild konnte nicht geladen werden.")
+        self.image_label.setText("Could not load NASA image.")
 
     # ---------- satellites ----------
     def show_satellites(self, passes):
@@ -262,17 +262,17 @@ class TileDetails(QWidget):
         fav_count = sum(1 for p in passes if p.get("is_favorite"))
 
         self.weather_card.setText(
-            f"<b>Open-Meteo Wolkenprognose:</b> Aktiv<br>"
-            f"Gefundene Überflüge: <b>{total_count}</b> (davon <b>{vis_count}</b> mit freiem Auge sichtbar, "
-            f"<b>{fav_count}</b> Favoriten-Überflüge)."
+            f"<b>Open-Meteo cloud forecast:</b> Active<br>"
+            f"Passes found: <b>{total_count}</b> (of which <b>{vis_count}</b> visible to the naked eye, "
+            f"<b>{fav_count}</b> favorite passes)."
         )
 
         self.apply_filter()
 
     def show_sat_error(self, msg):
         self.sat_list.clear()
-        self.sat_list.addItem(f"Fehler beim Berechnen: {msg}")
-        self.sat_count_label.setText("Fehler")
+        self.sat_list.addItem(f"Error calculating: {msg}")
+        self.sat_count_label.setText("Error")
 
     def apply_filter(self):
         """Filter passes according to visibility, favorites, and search query."""
@@ -304,15 +304,15 @@ class TileDetails(QWidget):
         total_vis = sum(1 for p in self.all_passes if p.get("is_visible"))
         total_fav = sum(1 for p in self.all_passes if p.get("is_favorite"))
         self.sat_count_label.setText(
-            f"{len(filtered)} angezeigt ({total_vis} sichtbar / {total_fav} Favoriten)"
+            f"{len(filtered)} displayed ({total_vis} visible / {total_fav} favorites)"
         )
 
         if not filtered:
-            msg = "Keine Überflüge gefunden."
+            msg = "No passes found."
             if visible_only:
-                msg = "Keine sichtbaren Überflüge in den nächsten 48h für diese Kachel."
+                msg = "No visible passes in the next 48h for this tile."
             self.sat_list.addItem(msg)
-            self.details_label.setText("Keine Überflüge für die aktuellen Filtereinstellungen.")
+            self.details_label.setText("No passes for the current filter settings.")
             self.btn_3d.setEnabled(False)
             self.selected_pass = None
             return
@@ -340,11 +340,11 @@ class TileDetails(QWidget):
 
             # Visibility status badge
             if is_vis:
-                status_badge = "👁️ Sichtbar"
+                status_badge = "Visible"
             elif not p.get("sunlit"):
-                status_badge = "🌑 Erdschatten"
+                status_badge = "🌑 Earth shadow"
             elif p.get("sun_alt", 0) >= 0:
-                status_badge = "☀️ Tag"
+                status_badge = "☀️ Day"
             else:
                 status_badge = "📉 <10°"
 
@@ -397,58 +397,58 @@ class TileDetails(QWidget):
 
         # Visibility status
         if p.get("is_visible"):
-            vis_html = "<span style='color: #2ecc71; font-weight: bold;'>👁️ Sichtbar mit freiem Auge</span>"
+            vis_html = "<span style='color: #2ecc71; font-weight: bold;'>Visible to the naked eye</span>"
         else:
-            vis_html = f"<span style='color: #e74c3c; font-weight: bold;'>❌ Nicht sichtbar</span> ({p.get('invisibility_reason')})"
-        lines.append(f"<b>Sichtbarkeit:</b> {vis_html}")
+            vis_html = f"<span style='color: #e74c3c; font-weight: bold;'>❌ Not visible</span> ({p.get('invisibility_reason')})"
+        lines.append(f"<b>Visibility:</b> {vis_html}")
 
         # Estimated magnitude
         mag = p.get("est_mag", 5.0)
         mag_desc = (
-            "Extrem hell" if mag < -1 else ("Sehr hell" if mag < 1 else ("Gut sichtbar" if mag < 3.5 else "Schwach"))
+            "Extremely bright" if mag < -1 else ("Very bright" if mag < 1 else ("Clearly visible" if mag < 3.5 else "Faint"))
         )
-        lines.append(f"<b>Geschätzte Helligkeit:</b> <b>Mag {mag:+.1f}</b> ({mag_desc})")
+        lines.append(f"<b>Estimated brightness:</b> <b>Mag {mag:+.1f}</b> ({mag_desc})")
 
         # Sun & Illumination
         sun_alt = p.get("sun_alt", 0.0)
-        sun_desc = "unter Horizont" if sun_alt < 0 else "über Horizont (Tag)"
+        sun_desc = "below horizon" if sun_alt < 0 else "above horizon (day)"
         sunlit_html = (
-            "<span style='color: #2ecc71;'>Ja (im Sonnenlicht)</span>"
+            "<span style='color: #2ecc71;'>Yes (in sunlight)</span>"
             if p.get("sunlit")
-            else "<span style='color: #e74c3c;'>Nein (im Erdschatten)</span>"
+            else "<span style='color: #e74c3c;'>No (in Earth's shadow)</span>"
         )
-        lines.append(f"<b>Sonnenhöhe:</b> {sun_alt:+.1f}° ({sun_desc}) | <b>Angestrahlt:</b> {sunlit_html}")
+        lines.append(f"<b>Sun elevation:</b> {sun_alt:+.1f}° ({sun_desc}) | <b>Illuminated:</b> {sunlit_html}")
 
         # Cloud Forecast (Open-Meteo)
         cloud_pct = p.get("cloud_cover")
         c_icon = p.get("cloud_icon", "☁️")
         c_pct = p.get("cloud_pct_str", "--%")
-        c_desc = p.get("cloud_desc", "Keine Daten")
+        c_desc = p.get("cloud_desc", "No data")
         c_col = p.get("cloud_color", "#aaa")
         lines.append(
-            f"<b>Wolkenprognose (Open-Meteo):</b> {c_icon} <span style='color: {c_col}; font-weight: bold;'>{c_pct}</span> ({c_desc})"
+            f"<b>Cloud forecast (Open-Meteo):</b> {c_icon} <span style='color: {c_col}; font-weight: bold;'>{c_pct}</span> ({c_desc})"
         )
 
         # Timing & Azimuth
         if "rise" in p:
             lines.append(
-                f"<b>Aufgang:</b> {p['rise']:%H:%M:%S} Richtung <b>{compass(p['rise_az'])}</b> ({p['rise_az']:.0f}°)"
+                f"<b>Rise:</b> {p['rise']:%H:%M:%S} direction <b>{compass(p['rise_az'])}</b> ({p['rise_az']:.0f}°)"
             )
         lines.append(
-            f"<b>Höchststand:</b> {p['culm']:%H:%M:%S}, <b>{p['max_alt']}°</b> Richtung <b>{compass(p['culm_az'])}</b> ({p['culm_az']:.0f}°)"
+            f"<b>Culmination:</b> {p['culm']:%H:%M:%S}, <b>{p['max_alt']}°</b> direction <b>{compass(p['culm_az'])}</b> ({p['culm_az']:.0f}°)"
         )
         lines.append(
-            f"<b>Untergang:</b> {p['set']:%H:%M:%S} Richtung <b>{compass(p['set_az'])}</b> ({p['set_az']:.0f}°)"
+            f"<b>Set:</b> {p['set']:%H:%M:%S} direction <b>{compass(p['set_az'])}</b> ({p['set_az']:.0f}°)"
         )
 
         if "rise" in p:
             secs = int((p["set"] - p["rise"]).total_seconds())
-            lines.append(f"<b>Dauer:</b> {secs // 60} min {secs % 60} s")
+            lines.append(f"<b>Duration:</b> {secs // 60} min {secs % 60} s")
 
         lines.append(
-            f"<b>Distanz beim Höchststand:</b> {p['distance_km']:.0f} km | <b>Höhe:</b> {p['height_km']:.0f} km | <b>Tempo:</b> {p['speed_kms']:.2f} km/s"
+            f"<b>Distance at culmination:</b> {p['distance_km']:.0f} km | <b>Height:</b> {p['height_km']:.0f} km | <b>Speed:</b> {p['speed_kms']:.2f} km/s"
         )
-        lines.append(f"<b>TLE-Datenstand:</b> {p['tle_epoch']:%d.%m.%Y %H:%M}")
+        lines.append(f"<b>TLE epoch:</b> {p['tle_epoch']:%d.%m.%Y %H:%M}")
 
         self.details_label.setText("<br>".join(lines))
 
@@ -457,3 +457,12 @@ class TileDetails(QWidget):
         if self.selected_pass:
             self.view3d = SatView3D(self.selected_pass, self.lat, self.lon)
             self.view3d.show()
+
+
+
+
+
+
+
+
+

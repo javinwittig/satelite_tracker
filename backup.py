@@ -37,7 +37,7 @@ class MainWindow(QMainWindow):
                     Qt.TransformationMode.SmoothTransformation,
                 )
                 if pixmap.isNull():
-                    print("Nicht gefunden:", path)
+                    print("Not found:", path)
 
                 button = QPushButton()
                 button.setIcon(QIcon(pixmap))
@@ -58,7 +58,7 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(widget)
     def on_tile_click(self, row, col):
         button = self.buttons[row][col]
-        button.setIcon(QIcon())  # Bild entfernen
+        button.setIcon(QIcon())  # remove image
         button.setStyleSheet("border: none; padding: 0px; background-color: red;")
 
         self.tile_details = TileDetails(row, col)

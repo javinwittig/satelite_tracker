@@ -13,8 +13,8 @@ TILES_Y = 50
 
 
 
-MIN_ELEVATION = 10.0        # Grad
-SUN_MAX_ALT = -6.0          # Grad, bürgerliche Dämmerung
+MIN_ELEVATION = 10.0        # degrees
+SUN_MAX_ALT = -6.0          # degrees, civil twilight
 TLE_MAX_AGE_HOURS = 6
 FAVORITES = {25544: "ISS", 20580: "Hubble", 48274: "Tiangong"}
 CACHE_DIR = "cache"

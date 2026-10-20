@@ -196,7 +196,7 @@ def get_passes(
 
         sats = list(sats_map.values())
         if not sats:
-            raise RuntimeError(f"Keine TLE-Daten für Gruppen {groups} erhalten")
+            raise RuntimeError(f"No TLE data received for groups {groups}")
 
         ts = _loader.timescale()
         eph = _loader("de421.bsp")
@@ -271,12 +271,12 @@ def get_passes(
                     # Explanatory reasons when not visible
                     reasons = []
                     if cur["max_alt"] < MIN_ELEVATION:
-                        reasons.append(f"Zu flach ({cur['max_alt']}° < {MIN_ELEVATION:.0f}°)")
+                        reasons.append(f"Too low ({cur['max_alt']}° < {MIN_ELEVATION:.0f}°)")
                     if cur["sun_alt"] >= 0.0:
-                        reasons.append(f"Tagüberflug (Sonne +{cur['sun_alt']:.1f}°)")
+                        reasons.append(f"Daytime pass (Sun +{cur['sun_alt']:.1f}°)")
                     if not cur["sunlit"]:
-                        reasons.append("Im Erdschatten (verfinstert)")
-                    cur["invisibility_reason"] = ", ".join(reasons) if reasons else "Vollständig sichtbar"
+                        reasons.append("In Earth's shadow (dimmed)")
+                    cur["invisibility_reason"] = ", ".join(reasons) if reasons else "Fully visible"
 
                     # Cloud forecast from Open-Meteo
                     cloud_pct = get_cloud_cover_for_time(cloud_forecast, cur["culm"])
@@ -303,7 +303,7 @@ if __name__ == "__main__":
         fav = f"[{p['favorite_name']}] " if p['is_favorite'] else ""
         print(
             f"{p['culm']:%d.%m. %H:%M} | {fav}{p['name']} | Mag {p['est_mag']:+.1f} | "
-            f"max {p['max_alt']}° | Sun {p['sun_alt']}° | Wolken {p['cloud_pct_str']}"
+            f"max {p['max_alt']}° | Sun {p['sun_alt']}° | Clouds {p['cloud_pct_str']}"
         )
 
 
@@ -314,7 +314,7 @@ if __name__ == "__main__":
 
 
 
-
+ 
 
 
 

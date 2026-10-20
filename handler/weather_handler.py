@@ -63,11 +63,11 @@ def get_cloud_cover_for_time(forecast, target_dt: datetime):
 def get_cloud_meta(cloud_pct):
     """Return icon, descriptive text and suggested UI color for cloud cover percentage."""
     if cloud_pct is None:
-        return "❓", "--%", "Keine Daten", "#888888"
+        return "❓", "--%", "No data", "#888888"
     if cloud_pct < 25:
-        return "☀️", f"{cloud_pct}%", "Klar (Beste Sicht)", "#27ae60"
+        return "☀️", f"{cloud_pct}%", "Clear (best visibility)", "#27ae60"
     elif cloud_pct < 70:
-        return "⛅", f"{cloud_pct}%", "Teilweise bewölkt", "#d35400"
+        return "⛅", f"{cloud_pct}%", "Partly cloudy", "#d35400"
     else:
-        return "☁️", f"{cloud_pct}%", "Bedeckt (Eingeschränkt)", "#7f8c8d"
+        return "☁️", f"{cloud_pct}%", "Overcast (limited)", "#7f8c8d"
 

@@ -40,6 +40,6 @@ def get_img(lat, lon, name, d=4.0):
     if r.ok and r.headers.get("content-type", "").startswith("image"):
         with open(name, "wb") as f:
             f.write(r.content)
-        print("Bild gespeichert:", name)
+        print("Image saved:", name)
     else:
         print(r.text[:500])

@@ -96,7 +96,7 @@ class SatView3D(QWidget):
         self.fig = Figure(figsize=(8, 8), facecolor="black")
         self.canvas = FigureCanvasQTAgg(self.fig)
         self.ax = self.fig.add_subplot(111, projection="3d")
-        self.status = QLabel("Lade Erdtextur...")
+        self.status = QLabel("Loading Earth texture...")
 
         layout = QVBoxLayout(self)
         layout.addWidget(NavigationToolbar2QT(self.canvas, self))
@@ -108,7 +108,7 @@ class SatView3D(QWidget):
         # load the texture in the background, redraw when ready
         self.job = _Job(self._load_texture)
         self.job.sig.done.connect(self.on_texture)
-        self.job.sig.fail.connect(lambda m: self.status.setText(f"Keine Textur: {m}"))
+        self.job.sig.fail.connect(lambda m: self.status.setText(f"No texture: {m}"))
         QThreadPool.globalInstance().start(self.job)
 
     def _load_texture(self):
@@ -140,7 +140,7 @@ class SatView3D(QWidget):
         return img
 
     def on_texture(self, img):
-        self.status.setText("Maus ziehen = drehen, Mausrad/Rechtsklick = zoomen")
+        self.status.setText("Drag mouse = rotate, mouse wheel/right-click = zoom")
         self.draw_scene(img)
 
     def draw_scene(self, texture):
@@ -178,14 +178,14 @@ class SatView3D(QWidget):
         o, pa, c = self.track["orbit"], self.track["pass"], self.track["culm"]
 
         _plot_split(ax, o, cam,
-                    dict(color="#ff5555", lw=1.6, zorder=3, label="Bahn"),
+                    dict(color="#ff5555", lw=1.6, zorder=3, label="Orbit"),
                     dict(color="#ff5555", lw=1.0, alpha=0.22, zorder=2))
         _plot_split(ax, _ground_track(o), cam,
                     dict(color="#ff8866", lw=0.9, alpha=0.55, zorder=3),
                     dict(color="#ff8866", lw=0.9, alpha=0.12, zorder=2))
         # pass: glow layers + bright core, only in-front segments
         _plot_glow(ax, pa, cam,
-                   dict(color="yellow", lw=4.5, zorder=3, label="Überflug"),
+                    dict(color="yellow", lw=4.5, zorder=3, label="Pass"),
                    [dict(color="#ffab00", lw=10, alpha=0.22, zorder=3),
                     dict(color="#ffd54f", lw=7, alpha=0.4, zorder=3)],
                    dict(color="yellow", lw=2.0, alpha=0.25, zorder=2))
@@ -193,11 +193,11 @@ class SatView3D(QWidget):
         # dots along the pass (only where visible)
         vis = ~_is_behind(pa, cam)
         ax.scatter(pa[vis, 0], pa[vis, 1], pa[vis, 2], color="#ff8f00", s=28, zorder=4,
-                   edgecolors="black", linewidths=0.5, depthshade=False, label="Zeitverlauf")
+                   edgecolors="black", linewidths=0.5, depthshade=False, label="Timeline")
 
         # ground tracks
         _plot_split(ax, _ground_track(pa), cam,
-                    dict(color="#00e5ff", lw=2.2, zorder=3, label="Subsatellitenpunkt"),
+                    dict(color="#00e5ff", lw=2.2, zorder=3, label="Sub-satellite point"),
                     dict(color="#00e5ff", lw=1.2, alpha=0.2, zorder=2))
 
         # connector: ground point -> satellite at culmination
@@ -205,7 +205,7 @@ class SatView3D(QWidget):
                     dict(color="white", lw=1.2, ls=":", alpha=0.9, zorder=3),
                     dict(color="white", lw=1.0, ls=":", alpha=0.25, zorder=2))
         ax.scatter(*c, color="white", s=140, zorder=4, edgecolors="black", linewidths=0.8,
-                   depthshade=False, label="Höchststand")
+                   depthshade=False, label="Culmination")
         ax.scatter(*sph(self.lat, self.lon, R * 1.005), color="lime", s=80, zorder=4,
                    depthshade=False, label="Tile")
 

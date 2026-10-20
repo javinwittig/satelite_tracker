@@ -9,7 +9,7 @@ def tile(filename, dir_in, dir_out, d):
     w, h = img.size
     tiles_x = w // d
     tiles_y = h // d
-    print(f"Bild: {w}x{h} px -> {tiles_x} Kacheln breit, {tiles_y} Kacheln hoch ({tiles_x * tiles_y} insgesamt)")
+    print(f"Image: {w}x{h} px -> {tiles_x} tiles wide, {tiles_y} tiles high ({tiles_x * tiles_y} total)")
 
     grid = product(range(0, h-h%d, d), range(0, w-w%d, d))
     for i, j in grid:

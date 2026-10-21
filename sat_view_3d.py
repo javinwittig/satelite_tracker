@@ -88,7 +88,7 @@ class SatView3D(QWidget):
     def __init__(self, p, lat, lon):
         super().__init__()
         self.p, self.lat, self.lon = p, lat, lon
-        self.setWindowTitle(f"3D: {p['name']}")
+        self.setWindowTitle(f"Satellite Tracker - 3D Orbit: {p['name']}")
         self.resize(800, 800)
 
         self.track = get_track(p)

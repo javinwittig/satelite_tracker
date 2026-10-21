@@ -14,7 +14,16 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from skyfield.api import Loader, wgs84
 from skyfield.framelib import itrs
 
-from constants import FAVORITES, MIN_ELEVATION, SUN_MAX_ALT
+from constants import (
+    CLOUDY_THRESHOLD,
+    DEFAULT_MAX_CLOUDS,
+    DEFAULT_MAX_MAGNITUDE,
+    FAVORITES,
+    MIN_ELEVATION,
+    SUN_MAX_ALT,
+    compass,
+)
+from geo_calc import format_tz_name, get_timezone_for_latlon
 from handler.weather_handler import (
     get_cloud_cover_for_time,
     get_cloud_forecast,
@@ -34,7 +43,7 @@ DOCKED_MODULES = {
     54216,  # Mengtian (docked to Tiangong)
 }
 
-_DIRS = ["N", "NO", "O", "SO", "S", "SW", "W", "NW"]
+# (Compass directions are defined in constants.py with multi-language support)
 
 # Standard intrinsic magnitude (at 1000 km, 50% illumination)
 KNOWN_STANDARD_MAGS = {
@@ -156,6 +165,7 @@ def get_passes(
     groups=("visual", "stations"),
     min_elev=0.0,
     fetch_weather=True,
+    tz=None,
 ):
     """Return a list of dicts (one per pass) for the given coordinates, sorted with favorites pinned to top.
 
@@ -163,14 +173,18 @@ def get_passes(
       - sat: skyfield EarthSatellite
       - name: satellite name
       - norad: NORAD catalog ID
-      - rise, culm, set: datetime objects
+      - rise, culm, set: datetime objects (converted to local timezone)
+      - tz, tz_name, tz_abbr: local timezone and abbreviation (e.g. CEST, EDT)
       - rise_az, culm_az, set_az: azimuth in degrees
       - max_alt: maximum elevation in degrees
       - distance_km, height_km, speed_kms: orbital geometry
       - sun_alt: Sun elevation from observer at culmination
       - sunlit: True if satellite is illuminated by Sun (not in Earth's shadow)
       - est_mag: estimated apparent visual magnitude
-      - is_visible: True if max_alt >= 10.0, sun_alt < 0.0, and sunlit is True
+      - is_geom_visible: True if max_alt >= 10.0, sun_alt < 0.0, and sunlit is True
+      - is_weather_visible: True if is_geom_visible and cloud_cover < 40%
+      - is_naked_eye_mag: True if est_mag <= 3.5
+      - is_visible: True if geometrically visible, naked-eye magnitude, and cloud cover < 50%
       - invisibility_reason: description why pass is not visible
       - is_favorite: True if ISS, Hubble, or Tiangong
       - favorite_name: friendly name (e.g. "ISS", "Hubble", "Tiangong")
@@ -179,6 +193,11 @@ def get_passes(
     """
     if isinstance(groups, str):
         groups = [groups]
+
+    if tz is None:
+        tz, tz_name = get_timezone_for_latlon(lat, lon)
+    else:
+        tz_name = getattr(tz, "key", str(tz))
 
     with _lock:
         sats_map = {}
@@ -219,7 +238,7 @@ def get_passes(
         cur = {}
         for t, e in zip(times, events):
             alt, az, dist = (sat - observer).at(t).altaz()
-            when = t.utc_datetime().astimezone()
+            when = t.utc_datetime().astimezone(tz)
 
             if e == 0:  # rise
                 cur = {"rise": when, "rise_az": az.degrees}
@@ -241,7 +260,10 @@ def get_passes(
                     cur["sat"] = sat
                     cur["name"] = sat.name
                     cur["norad"] = norad
-                    cur["tle_epoch"] = sat.epoch.utc_datetime().astimezone()
+                    cur["tle_epoch"] = sat.epoch.utc_datetime().astimezone(tz)
+                    cur["tz"] = tz
+                    cur["tz_name"] = tz_name
+                    cur["tz_abbr"] = format_tz_name(cur["culm"])
 
                     # Sun position & illumination
                     sun_alt_deg = obs_pos.at(tc).observe(sun).apparent().altaz()[0].degrees
@@ -261,23 +283,6 @@ def get_passes(
                     cur["is_favorite"] = is_fav
                     cur["favorite_name"] = fav_name
 
-                    # Visibility filter criteria:
-                    # 1. Minimum elevation >= 10.0°
-                    # 2. Sun below horizon (sun_alt < 0.0°)
-                    # 3. Satellite illuminated by sun (sunlit == True)
-                    is_vis = (cur["max_alt"] >= MIN_ELEVATION) and (cur["sun_alt"] < 0.0) and cur["sunlit"]
-                    cur["is_visible"] = is_vis
-
-                    # Explanatory reasons when not visible
-                    reasons = []
-                    if cur["max_alt"] < MIN_ELEVATION:
-                        reasons.append(f"Too low ({cur['max_alt']}° < {MIN_ELEVATION:.0f}°)")
-                    if cur["sun_alt"] >= 0.0:
-                        reasons.append(f"Daytime pass (Sun +{cur['sun_alt']:.1f}°)")
-                    if not cur["sunlit"]:
-                        reasons.append("In Earth's shadow (dimmed)")
-                    cur["invisibility_reason"] = ", ".join(reasons) if reasons else "Fully visible"
-
                     # Cloud forecast from Open-Meteo
                     cloud_pct = get_cloud_cover_for_time(cloud_forecast, cur["culm"])
                     cur["cloud_cover"] = cloud_pct
@@ -286,6 +291,42 @@ def get_passes(
                     cur["cloud_pct_str"] = c_str
                     cur["cloud_desc"] = c_desc
                     cur["cloud_color"] = c_col
+
+                    # Two classifications:
+                    # 1. Geometrically visible:
+                    #    - Minimum elevation >= 10.0°
+                    #    - Sun below horizon (sun_alt < 0.0°)
+                    #    - Satellite illuminated by sun (sunlit == True)
+                    is_geom_vis = (cur["max_alt"] >= MIN_ELEVATION) and (cur["sun_alt"] < 0.0) and cur["sunlit"]
+                    cur["is_geom_visible"] = is_geom_vis
+
+                    # 2. Weather visible:
+                    #    - Geometrically visible AND clouds < 40%
+                    is_weather_vis = is_geom_vis and (cloud_pct is None or cloud_pct < CLOUDY_THRESHOLD)
+                    cur["is_weather_visible"] = is_weather_vis
+
+                    # Naked-eye magnitude limit (<= 3.5 mag)
+                    is_naked_eye = (cur["est_mag"] is not None and cur["est_mag"] <= DEFAULT_MAX_MAGNITUDE)
+                    cur["is_naked_eye_mag"] = is_naked_eye
+
+                    # Combined visibility (geometrically visible, clouds < 50%, and mag <= 3.5)
+                    is_vis = is_geom_vis and is_naked_eye and (cloud_pct is None or cloud_pct < DEFAULT_MAX_CLOUDS)
+                    cur["is_visible"] = is_vis
+
+                    # Explanatory reasons when not visible
+                    reasons = []
+                    if cur["max_alt"] < MIN_ELEVATION:
+                        reasons.append(f"Too low ({cur['max_alt']}° < {MIN_ELEVATION:.0f}°)")
+                    if cur["sun_alt"] >= 0.0:
+                        reasons.append(f"Daytime pass (Sun {cur['sun_alt']:+.1f}°)")
+                    if not cur["sunlit"]:
+                        reasons.append("In Earth's shadow (dimmed)")
+                    if is_geom_vis:
+                        if not is_naked_eye:
+                            reasons.append(f"Faint magnitude (Mag {cur['est_mag']:+.1f} > {DEFAULT_MAX_MAGNITUDE})")
+                        if cloud_pct is not None and cloud_pct >= DEFAULT_MAX_CLOUDS:
+                            reasons.append(f"Cloudy ({cloud_pct}% ≥ {DEFAULT_MAX_CLOUDS}%)")
+                    cur["invisibility_reason"] = ", ".join(reasons) if reasons else "Fully visible"
 
                     del cur["t_culm"]
                     passes.append(cur)

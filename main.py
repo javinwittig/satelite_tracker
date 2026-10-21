@@ -17,7 +17,7 @@ class MainWindow(QMainWindow):
 
         self.buttons = [[None for _ in range(TILES_X)] for _ in range(TILES_Y)]
 
-        self.setWindowTitle("My PyQt6 App")
+        self.setWindowTitle("Satellite Tracker")
 
         layout = QGridLayout()
         layout.setSpacing(0)
@@ -65,40 +65,15 @@ class MainWindow(QMainWindow):
         self.tile_details.show()
 
 
+
+
+
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()
     sys.exit(app.exec())
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-y = 8
-
-
-
-x = 7
-
-
-
-
-
-
-
 
 
 

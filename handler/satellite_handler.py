@@ -41,7 +41,7 @@ from handler.weather_handler import (
 
 _cache_dir = os.path.join(DATA_DIR, "sat_cache")
 os.makedirs(_cache_dir, exist_ok=True)
-_loader = Loader(_cache_dir)
+_loader = Loader(_cache_dir, verbose=False)
 _lock = threading.Lock()
 _pass_cache_dir = os.path.join(_cache_dir, "passes")
 os.makedirs(_pass_cache_dir, exist_ok=True)

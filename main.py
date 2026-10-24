@@ -1,5 +1,12 @@
 import sys
 import os
+
+# A windowed PyInstaller build has no console, so stdout/stderr are None and any library writing to them crashes.
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, "w")
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, "w")
+
 from PyQt6.QtWidgets import QMainWindow, QApplication, QWidget, QToolTip, QInputDialog, QMessageBox
 from PyQt6.QtGui import QAction, QColor, QIcon, QPixmap, QPainter, QKeySequence
 from PyQt6.QtCore import Qt, QRect, QObject, QRunnable, QThreadPool, pyqtSignal

@@ -20,8 +20,6 @@ jobs:
             name: SatelliteTracker-linux-x64
           - os: macos-latest
             name: SatelliteTracker-macos-arm64
-          - os: macos-13
-            name: SatelliteTracker-macos-x64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4

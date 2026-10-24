@@ -18,7 +18,7 @@ Download the version for your system from the [releases page](https://github.com
 | Linux (64-bit) | `SatelliteTracker-linux-x64.tar.gz` |
 | macOS (Apple Silicon, M1 and newer) | `SatelliteTracker-macos-arm64.zip` |
 
-- **macOS:** the app is not signed — right-click it and choose *Open* the first time.
+- **macOS:** the app is not signed, right-click it and choose *Open* the first time.
 - **Linux:** some distributions also need the `libxcb-cursor0` package.
 - Downloaded data (orbits, weather, images) is cached in `~/.satellite_tracker`.
 

@@ -1,5 +1,8 @@
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
+
+import requests
+
 from constants import TILES_X, TILES_Y
 
 _tf = None
@@ -22,6 +25,40 @@ def tile_to_latlon(row, col):
     lon = -180 + (col + 0.5) / TILES_X * 360
     lat = 90 - (row + 0.5) / TILES_Y * 180
     return lat, lon
+
+
+def latlon_to_tile(lat, lon):
+    """Nearest map tile for a latitude and longitude."""
+    row = int((90 - lat) / 180 * TILES_Y)
+    col = int((lon + 180) / 360 * TILES_X)
+    row = max(0, min(TILES_Y - 1, row))
+    col = max(0, min(TILES_X - 1, col))
+    return row, col
+
+
+def geocode_place(query: str):
+    """Look up a place name with the Open-Meteo geocoding API."""
+    try:
+        resp = requests.get(
+            "https://geocoding-api.open-meteo.com/v1/search",
+            params={"name": query, "count": 1, "language": "en", "format": "json"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        results = resp.json().get("results") or []
+        if not results:
+            return None
+        item = results[0]
+        return {
+            "name": item.get("name", query),
+            "country": item.get("country", ""),
+            "latitude": float(item["latitude"]),
+            "longitude": float(item["longitude"]),
+            "elevation": float(item.get("elevation") or 0.0),
+        }
+    except Exception as e:
+        print(f"Geocoding error for '{query}': {e}")
+        return None
 
 
 def get_timezone_for_latlon(lat: float, lon: float):

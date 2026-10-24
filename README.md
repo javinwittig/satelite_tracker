@@ -4,7 +4,7 @@ I built a desktop app that shows you which satellites will fly over any place on
 
 ![Satellite Tracker – pass list for a selected location](assets/Detailedview.png)
 
-**[⬇️ Download the latest release](https://github.com/javinwittig/satelite_tracker/releases/latest)**
+**[ Download the latest release](https://github.com/javinwittig/satelite_tracker/releases/latest)**
 
 ---
 

@@ -8,15 +8,15 @@ from matplotlib.figure import Figure
 from PyQt6.QtCore import QObject, QRunnable, QThreadPool, pyqtSignal
 from PyQt6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
+from constants import DATA_DIR, RESOURCE_DIR
 from handler.satellite_handler import get_track
 
-R = 6371.0  # Earth radius in km
-N_LAT, N_LON = 180, 360  # mesh grid (higher = nicer but slower to rotate)
+R = 6371.0
+N_LAT, N_LON = 180, 360
 
-# NASA Blue Marble (topo + bathymetry), equirectangular: lon -180..180 left->right, lat +90..-90 top->bottom
 _TEX_URL = "https://eoimages.gsfc.nasa.gov/images/imagerecords/73000/73909/world.topo.bathy.200412.3x5400x2700.jpg"
-_TEX_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "earth_blue_marble.jpg")
-_TEX_FALLBACK = os.path.join(os.path.dirname(os.path.abspath(__file__)), "earth_texture.jpg")
+_TEX_PATH = os.path.join(DATA_DIR, "earth_blue_marble.jpg")
+_TEX_FALLBACK = os.path.join(RESOURCE_DIR, "earth_texture.jpg")
 
 
 def sph(lat, lon, r=R):
@@ -25,19 +25,16 @@ def sph(lat, lon, r=R):
 
 
 def _cam_dir(lat, lon):
-    """Unit vector from earth center towards the camera (same convention as sph)."""
     return sph(lat, lon) / R
 
 
 def _is_behind(pts, cam):
-    """True where a point is hidden behind the earth disc from the camera's view."""
     d = pts @ cam
     radial_sq = np.einsum("ij,ij->i", pts, pts) - d * d
     return (d < 0) & (radial_sq < R * R)
 
 
 def _plot_split(ax, pts, cam, front, back):
-    """Plot a polyline, dimming the segments hidden behind the earth."""
     occ = _is_behind(np.asarray(pts, float), cam)
     cuts = np.flatnonzero(np.diff(occ)) + 1
     for s, e in zip(np.r_[0, cuts], np.r_[cuts, len(occ)]):
@@ -45,7 +42,6 @@ def _plot_split(ax, pts, cam, front, back):
 
 
 def _plot_glow(ax, pts, cam, core, glows, back):
-    """Plot a polyline with a glow effect: wide dim layers + bright core, dimmed behind the earth."""
     occ = _is_behind(np.asarray(pts, float), cam)
     cuts = np.flatnonzero(np.diff(occ)) + 1
     for s, e in zip(np.r_[0, cuts], np.r_[cuts, len(occ)]):
@@ -59,7 +55,6 @@ def _plot_glow(ax, pts, cam, core, glows, back):
 
 
 def _ground_track(pts):
-    """Sub-satellite points: project the track onto the earth surface."""
     pts = np.asarray(pts, float)
     n = np.linalg.norm(pts, axis=-1, keepdims=True)
     return pts / n * (R * 1.002)
@@ -105,7 +100,6 @@ class SatView3D(QWidget):
 
         self.draw_scene(None)
 
-        # load the texture in the background, redraw when ready
         self.job = _Job(self._load_texture)
         self.job.sig.done.connect(self.on_texture)
         self.job.sig.fail.connect(lambda m: self.status.setText(f"No texture: {m}"))
@@ -133,7 +127,6 @@ class SatView3D(QWidget):
         img = img[..., :3]
         scale = 255.0 if img.dtype == np.uint8 else 1.0
         img = img.astype(np.float32) / scale
-        # average-pool the texture onto the mesh grid for smooth, non-pixelated surfaces
         if img.shape[0] % N_LAT == 0 and img.shape[1] % N_LON == 0:
             ry, rx = img.shape[0] // N_LAT, img.shape[1] // N_LON
             img = img.reshape(N_LAT, ry, N_LON, rx, 3).mean(axis=(1, 3))
@@ -148,11 +141,8 @@ class SatView3D(QWidget):
         ax.clear()
         ax.set_axis_off()
         ax.set_facecolor("black")
-        # matplotlib sorts 3D collections by depth but draws plain Line3D objects
-        # below the surface, so we control the painter's order manually
         ax.computed_zorder = False
 
-        # Earth
         lats = np.radians(np.linspace(90, -90, N_LAT))
         lons = np.radians(np.linspace(-180, 180, N_LON))
         lon_g, lat_g = np.meshgrid(lons, lats)
@@ -163,7 +153,7 @@ class SatView3D(QWidget):
         if texture is not None:
             if texture.shape[:2] == (N_LAT, N_LON):
                 tex = texture
-            else:  # nearest-neighbour resample for non-poolable sizes
+            else:
                 h, w = texture.shape[:2]
                 rows = np.linspace(0, h - 1, N_LAT).astype(int)
                 cols = np.linspace(0, w - 1, N_LON).astype(int)
@@ -173,7 +163,6 @@ class SatView3D(QWidget):
         else:
             ax.plot_surface(x, y, z, color="#1f4e79", zorder=1, rstride=2, cstride=2, shade=True, linewidth=0)
 
-        # orbit, pass, ground tracks, satellite, observer
         cam = _cam_dir(self.lat, self.lon)
         o, pa, c = self.track["orbit"], self.track["pass"], self.track["culm"]
 
@@ -183,24 +172,20 @@ class SatView3D(QWidget):
         _plot_split(ax, _ground_track(o), cam,
                     dict(color="#ff8866", lw=0.9, alpha=0.55, zorder=3),
                     dict(color="#ff8866", lw=0.9, alpha=0.12, zorder=2))
-        # pass: glow layers + bright core, only in-front segments
         _plot_glow(ax, pa, cam,
                     dict(color="yellow", lw=4.5, zorder=3, label="Pass"),
                    [dict(color="#ffab00", lw=10, alpha=0.22, zorder=3),
                     dict(color="#ffd54f", lw=7, alpha=0.4, zorder=3)],
                    dict(color="yellow", lw=2.0, alpha=0.25, zorder=2))
 
-        # dots along the pass (only where visible)
         vis = ~_is_behind(pa, cam)
         ax.scatter(pa[vis, 0], pa[vis, 1], pa[vis, 2], color="#ff8f00", s=28, zorder=4,
                    edgecolors="black", linewidths=0.5, depthshade=False, label="Timeline")
 
-        # ground tracks
         _plot_split(ax, _ground_track(pa), cam,
                     dict(color="#00e5ff", lw=2.2, zorder=3, label="Sub-satellite point"),
                     dict(color="#00e5ff", lw=1.2, alpha=0.2, zorder=2))
 
-        # connector: ground point -> satellite at culmination
         _plot_split(ax, np.vstack([_ground_track(c), c]), cam,
                     dict(color="white", lw=1.2, ls=":", alpha=0.9, zorder=3),
                     dict(color="white", lw=1.0, ls=":", alpha=0.25, zorder=2))
@@ -214,6 +199,6 @@ class SatView3D(QWidget):
         ax.set_ylim(-lim, lim)
         ax.set_zlim(-lim, lim)
         ax.set_box_aspect((1, 1, 1))
-        ax.view_init(elev=self.lat, azim=self.lon)  # camera looks at the tile
+        ax.view_init(elev=self.lat, azim=self.lon)
         ax.legend(loc="upper left", facecolor="black", labelcolor="white")
         self.canvas.draw_idle()

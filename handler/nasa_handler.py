@@ -6,20 +6,11 @@ from datetime import datetime, timedelta, timezone
 import math
 
 
-
 def get_img(lat, lon, name, d=4.0):
-    """
-    Downloads an undistorted, gap-free satellite image around (lat, lon).
-    - Uses VIIRS (no orbital swath gaps like MODIS).
-    - Adjusts longitude span by 1 / cos(lat) to maintain real-world 1:1 aspect ratio.
-    - Clamps boundaries to prevent black borders from out-of-bounds coordinates.
-    """
-    # Adjust lon span for latitude curvature so ground distance is roughly square
     rad = math.radians(lat)
-    cos_lat = max(math.cos(rad), 0.15)  # avoid division by zero near poles
+    cos_lat = max(math.cos(rad), 0.15)
     d_lat = d
     d_lon = d / cos_lat
-    # Clamp to valid geographical ranges
     lat_min = max(-89.9, lat - d_lat)
     lat_max = min(89.9, lat + d_lat)
     lon_min = max(-180.0, lon - d_lon)

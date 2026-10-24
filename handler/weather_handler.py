@@ -3,13 +3,10 @@ import requests
 from datetime import datetime, timezone
 
 _WEATHER_CACHE = {}
-_CACHE_DURATION = 1800  # 30 minutes
+_CACHE_DURATION = 1800
 
 
 def get_cloud_forecast(lat: float, lon: float):
-    """Fetch hourly cloud cover forecast (0-100%) for the next 3 days from Open-Meteo.
-    Returns a list of (datetime_utc, cloud_cover_int) tuples.
-    """
     cache_key = (round(lat, 2), round(lon, 2))
     now = time.time()
 
@@ -44,7 +41,6 @@ def get_cloud_forecast(lat: float, lon: float):
 
 
 def get_cloud_cover_for_time(forecast, target_dt: datetime):
-    """Find the cloud cover percentage (%) closest to the given datetime."""
     if not forecast or target_dt is None:
         return None
 
@@ -54,20 +50,17 @@ def get_cloud_cover_for_time(forecast, target_dt: datetime):
         target_utc = target_dt.astimezone(timezone.utc)
 
     closest = min(forecast, key=lambda item: abs((item[0] - target_utc).total_seconds()))
-    # Ensure it's within a reasonable window (e.g. 3 hours)
     if abs((closest[0] - target_utc).total_seconds()) <= 3 * 3600:
         return closest[1]
     return None
 
 
 def get_cloud_meta(cloud_pct):
-    """Return icon, descriptive text and suggested UI color for cloud cover percentage."""
     if cloud_pct is None:
-        return "❓", "--%", "No data", "#888888"
+        return "--%", "No data"
     if cloud_pct < 25:
-        return "☀️", f"{cloud_pct}%", "Clear (best visibility)", "#27ae60"
+        return f"{cloud_pct}%", "Clear (best visibility)"
     elif cloud_pct < 70:
-        return "⛅", f"{cloud_pct}%", "Partly cloudy", "#d35400"
+        return f"{cloud_pct}%", "Partly cloudy"
     else:
-        return "☁️", f"{cloud_pct}%", "Overcast (limited)", "#7f8c8d"
-
+        return f"{cloud_pct}%", "Overcast (limited)"

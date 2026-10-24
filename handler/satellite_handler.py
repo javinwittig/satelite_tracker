@@ -12,19 +12,22 @@ import numpy as np
 import requests
 from skyfield import almanac
 
-# Ensure project root is in sys.path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from skyfield.api import Loader, wgs84
+from skyfield.constants import ERAD
 from skyfield.framelib import itrs
+from skyfield.geometry import intersect_line_and_sphere
 from skyfield.iokit import parse_tle_file
 
 from constants import (
     CLOUDY_THRESHOLD,
+    DATA_DIR,
     DEFAULT_MAX_CLOUDS,
     DEFAULT_MAX_MAGNITUDE,
     FAVORITES,
     MIN_ELEVATION,
+    RESOURCE_DIR,
     SUN_MAX_ALT,
     TLE_MAX_AGE_HOURS,
     compass,
@@ -36,8 +39,7 @@ from handler.weather_handler import (
     get_cloud_meta,
 )
 
-_project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-_cache_dir = os.path.join(_project_root, "sat_cache")
+_cache_dir = os.path.join(DATA_DIR, "sat_cache")
 os.makedirs(_cache_dir, exist_ok=True)
 _loader = Loader(_cache_dir)
 _lock = threading.Lock()
@@ -45,30 +47,26 @@ _pass_cache_dir = os.path.join(_cache_dir, "passes")
 os.makedirs(_pass_cache_dir, exist_ok=True)
 UNCATEGORIZED_TOKENS = ("R/B", "ROCKET", "DEB", "STAGE", "AKM", "PKM", "APOGEE", "FREGAT", "CENTAUR")
 
-# Space station docked modules that share orbits with main stations
 DOCKED_MODULES = {
-    36086,  # Poisk (docked to ISS)
-    49044,  # Nauka (docked to ISS)
-    53239,  # Wentian (docked to Tiangong)
-    54216,  # Mengtian (docked to Tiangong)
+    36086,
+    49044,
+    53239,
+    54216,
 }
 
-# (Compass directions are defined in constants.py with multi-language support)
 
-# Standard intrinsic magnitude (at 1000 km, 50% illumination)
 KNOWN_STANDARD_MAGS = {
-    25544: -2.5,  # ISS
-    20580: 1.5,   # Hubble Space Telescope (HST)
-    48274: 0.0,   # Tiangong Core Module (CSS Tianhe)
-    53239: 1.0,   # Wentian
-    54216: 1.0,   # Mengtian
+    25544: -2.5,
+    20580: 1.5,
+    48274: 0.0,
+    53239: 1.0,
+    54216: 1.0,
 }
 
 _MAG_CACHE = {}
 
 
 def _init_magnitudes():
-    """Load standard magnitudes from quicksat.mag or download if needed."""
     global _MAG_CACHE
     mag_file = os.path.join(_cache_dir, "quicksat.mag")
 
@@ -88,7 +86,7 @@ def _init_magnitudes():
 
     mag_dict = dict(KNOWN_STANDARD_MAGS)
 
-    local_json = os.path.join(_project_root, "sat_magnitudes.json")
+    local_json = os.path.join(RESOURCE_DIR, "sat_magnitudes.json")
     if os.path.exists(local_json):
         try:
             with open(local_json, "r", encoding="utf-8") as f:
@@ -116,7 +114,6 @@ def _init_magnitudes():
 
 
 def get_standard_magnitude(norad: int) -> float:
-    """Return standard intrinsic magnitude (default 5.0 for typical satellite)."""
     global _MAG_CACHE
     if not _MAG_CACHE:
         _init_magnitudes()
@@ -135,8 +132,22 @@ def _airmass(altitude_deg: float):
     return 1.0 / (np.sin(np.radians(h)) + 0.50572 * (h + 6.07995) ** -1.6364)
 
 
-def calculate_brightness(sat, t_culm, eph, obs_pos, dist_km: float, altitude_deg: float):
-    """Lambertian sphere estimate with range, phase angle and atmospheric extinction."""
+def phase_angles(sat_km, sun_km, obs_km):
+    v_sun = sun_km - sat_km
+    v_obs = obs_km - sat_km
+    norms = np.linalg.norm(v_sun, axis=0) * np.linalg.norm(v_obs, axis=0)
+    with np.errstate(invalid="ignore", divide="ignore"):
+        cos_beta = np.clip(np.einsum("ij,ij->j", v_sun, v_obs) / norms, -1.0, 1.0)
+    return np.where(norms > 0, np.arccos(cos_beta), np.nan)
+
+
+def sunlit_mask(sat_km, sun_km):
+    with np.errstate(invalid="ignore"):
+        _, far = intersect_line_and_sphere(sun_km - sat_km, -sat_km, ERAD / 1000.0)
+    return np.nan_to_num(far) <= 0
+
+
+def calculate_brightness(sat, beta, dist_km: float, altitude_deg: float):
     result = {
         "est_mag": 5.0,
         "std_mag": None,
@@ -146,20 +157,8 @@ def calculate_brightness(sat, t_culm, eph, obs_pos, dist_km: float, altitude_deg
         "brightness_uncertain": is_uncertain_object(getattr(sat, "name", "")),
     }
     try:
-        earth = eph["earth"]
-        sun = eph["sun"]
-
-        sat_bary = (earth + sat).at(t_culm).position.km
-        v_sun = sun.at(t_culm).position.km - sat_bary
-        v_obs = obs_pos.at(t_culm).position.km - sat_bary
-
-        norm_sun = np.linalg.norm(v_sun)
-        norm_obs = np.linalg.norm(v_obs)
-        if norm_sun == 0 or norm_obs == 0:
+        if np.isnan(beta):
             return result
-
-        cos_beta = np.clip(np.dot(v_sun, v_obs) / (norm_sun * norm_obs), -1.0, 1.0)
-        beta = np.arccos(cos_beta)
         phi = max((np.sin(beta) + (np.pi - beta) * np.cos(beta)) / np.pi, 1e-4)
 
         m_std = get_standard_magnitude(sat.model.satnum)
@@ -218,11 +217,10 @@ def compass(deg):
 
 
 def get_track(p, n=400):
-    """Earth-fixed (ITRS) xyz positions in km: one full orbit around the culmination, plus the pass itself."""
     ts = _loader.timescale()
     sat = p["sat"]
 
-    period_min = 2 * np.pi / sat.model.no_kozai  # no_kozai is in rad/min
+    period_min = 2 * np.pi / sat.model.no_kozai
     day = period_min / 1440
     t_c = ts.from_datetime(p["culm"])
     t_orbit = ts.tt_jd(t_c.tt + np.linspace(-0.5, 0.5, n) * day)
@@ -246,6 +244,11 @@ def _cache_key(lat, lon, elevation_m, hours, groups, sats):
         _pass_cache_dir,
         f"passes_{lat:+.3f}_{lon:+.3f}_{elevation_m:.0f}m_{day}_{hour}_{latest:%Y%m%d%H%M%S}_{group_key}_{hours}h.json",
     )
+
+
+def _clean_tle_text(text):
+    lines = (line.rstrip() for line in text.replace("\r", "\n").split("\n"))
+    return "\n".join(line for line in lines if line) + "\n"
 
 
 def _load_tle_group(group, ts):
@@ -280,8 +283,8 @@ def _load_tle_group(group, ts):
                 text = f.read()
         else:
             resp.raise_for_status()
-            text = resp.text
-            with open(path, "w", encoding="utf-8") as f:
+            text = _clean_tle_text(resp.text)
+            with open(path, "w", encoding="utf-8", newline="\n") as f:
                 f.write(text)
         meta = {
             "etag": resp.headers.get("ETag"),
@@ -345,34 +348,6 @@ def get_passes(
     progress=None,
     cancel=None,
 ):
-    """Return a list of dicts (one per pass) for the given coordinates, sorted with favorites pinned to top.
-
-    Each pass dictionary contains:
-      - sat: skyfield EarthSatellite
-      - name: satellite name
-      - norad: NORAD catalog ID
-      - rise, culm, set: datetime objects (converted to local timezone)
-      - tz, tz_name, tz_abbr: local timezone and abbreviation (e.g. CEST, EDT)
-      - rise_az, culm_az, set_az: azimuth in degrees
-      - max_alt: maximum elevation in degrees
-      - distance_km, height_km, speed_kms: orbital geometry
-      - sun_alt: Sun elevation from observer at culmination
-      - sunlit: True if satellite is illuminated by Sun (not in Earth's shadow)
-      - est_mag: estimated apparent visual magnitude
-      - is_geom_visible: True if max_alt >= 10.0, sun_alt < 0.0, and sunlit is True
-      - is_weather_visible: True if is_geom_visible and cloud_cover < 40%
-      - is_naked_eye_mag: True if est_mag <= 3.5
-      - is_visible: True if geometrically visible, naked-eye magnitude, and cloud cover < 50%
-      - invisibility_reason: description why pass is not visible
-      - is_favorite: True if ISS, Hubble, or Tiangong
-      - favorite_name: friendly name (e.g. "ISS", "Hubble", "Tiangong")
-      - cloud_cover: cloud cover % (0-100) from Open-Meteo
-      - cloud_icon, cloud_pct_str, cloud_desc, cloud_color: cloud metadata
-      - tle_age_days, tle_old: age of the satellite's TLE (old if > 3 days)
-      - twilight: twilight class at culmination based on Sun altitude
-      - phase_angle, airmass, extinction_mag, brightness_uncertain: brightness model data
-      - moon_phase_name, moon_illumination, moon_alt, moon_az, moon_separation, moon_glare: Moon conditions
-    """
     if isinstance(groups, str):
         groups = [groups]
 
@@ -396,7 +371,7 @@ def get_passes(
             check_cancel()
             report(2 + index * 4, f"Loading TLE group {group}...")
             try:
-                text = _load_tle_group(group, ts)
+                text = _clean_tle_text(_load_tle_group(group, ts))
                 loaded = parse_tle_file(io.BytesIO(text.encode("utf-8")), ts=ts)
                 for s in loaded:
                     if s.model.satnum not in DOCKED_MODULES:
@@ -448,138 +423,141 @@ def get_passes(
     for index, sat in enumerate(sats):
         check_cancel()
         if index % 10 == 0:
-            report(20 + int(75 * index / max(len(sats), 1)), f"Computing passes {index}/{len(sats)}...")
+            report(20 + int(65 * index / max(len(sats), 1)), f"Computing passes {index}/{len(sats)}...")
         times, events = sat.find_events(observer, t0, t1, altitude_degrees=min_elev)
+        if len(times) == 0:
+            continue
+        geo_all = sat.at(times)
+        alt_all, az_all, dist_all = (geo_all - observer.at(times)).altaz()
+        height_all = wgs84.height_of(geo_all).km
+        utc_all = times.utc_datetime()
         cur = {}
-        for t, e in zip(times, events):
-            alt, az, dist = (sat - observer).at(t).altaz()
-            when = t.utc_datetime().astimezone(tz)
+        for i, e in enumerate(events):
+            utc = utc_all[i]
+            when = utc.astimezone(tz)
+            az = float(az_all.degrees[i])
 
-            if e == 0:  # rise
-                cur = {"rise": when, "rise_az": az.degrees, "rise_utc": t.utc_datetime()}
-            elif e == 1:  # culmination
-                geo = sat.at(t)
+            if e == 0:
+                cur = {"rise": when, "rise_az": az, "rise_utc": utc}
+            elif e == 1:
                 cur["culm"] = when
-                cur["culm_utc"] = t.utc_datetime()
-                cur["culm_az"] = az.degrees
-                cur["max_alt"] = round(alt.degrees, 1)
-                cur["distance_km"] = dist.km
-                cur["height_km"] = wgs84.height_of(geo).km
-                cur["speed_kms"] = float(np.linalg.norm(geo.velocity.km_per_s))
-                cur["t_culm"] = t
-            elif e == 2:  # set
+                cur["culm_utc"] = utc
+                cur["culm_az"] = az
+                cur["max_alt"] = round(float(alt_all.degrees[i]), 1)
+                cur["distance_km"] = float(dist_all.km[i])
+                cur["height_km"] = float(height_all[i])
+                cur["sat_km"] = geo_all.position.km[:, i]
+                cur["sat_vel"] = geo_all.velocity.km_per_s[:, i]
+                cur["t_culm"] = times.tt[i]
+            elif e == 2:
                 cur["set"] = when
-                cur["set_utc"] = t.utc_datetime()
-                cur["set_az"] = az.degrees
+                cur["set_utc"] = utc
+                cur["set_az"] = az
                 if "culm" in cur and "t_culm" in cur:
-                    tc = cur["t_culm"]
-                    norad = sat.model.satnum
                     cur["sat"] = sat
-                    cur["name"] = sat.name
-                    cur["norad"] = norad
-                    epoch_utc = sat.epoch.utc_datetime()
-                    tle_age_days = (datetime.now(timezone.utc) - epoch_utc).total_seconds() / 86400.0
-                    cur["tle_epoch"] = epoch_utc.astimezone(tz)
-                    cur["tle_epoch_utc"] = epoch_utc
-                    cur["tle_age_days"] = round(tle_age_days, 1)
-                    cur["tle_old"] = tle_age_days > 3.0
-                    cur["tz"] = tz
-                    cur["tz_name"] = tz_name
-                    cur["tz_abbr"] = format_tz_name(cur["culm"])
-
-                    # Sun position & illumination
-                    sun_alt_deg = obs_pos.at(tc).observe(sun).apparent().altaz()[0].degrees
-                    sunlit = bool(sat.at(tc).is_sunlit(eph))
-                    cur["sun_alt"] = round(sun_alt_deg, 1)
-                    cur["sunlit"] = sunlit
-                    cur["twilight"] = classify_twilight(cur["sun_alt"])
-
-                    moon_alt, moon_az, _ = obs_pos.at(tc).observe(moon).apparent().altaz()
-                    phase_deg = almanac.moon_phase(eph, tc).degrees
-                    illumination = (1.0 - np.cos(np.radians(phase_deg))) / 2.0
-                    cur["moon_phase_name"] = moon_phase_name(phase_deg)
-                    cur["moon_illumination"] = round(illumination * 100)
-                    cur["moon_alt"] = round(moon_alt.degrees, 1)
-                    cur["moon_az"] = round(moon_az.degrees, 1)
-                    sep = np.degrees(
-                        np.arccos(
-                            np.clip(
-                                np.sin(np.radians(cur["max_alt"])) * np.sin(np.radians(moon_alt.degrees))
-                                + np.cos(np.radians(cur["max_alt"]))
-                                * np.cos(np.radians(moon_alt.degrees))
-                                * np.cos(np.radians(cur["culm_az"] - moon_az.degrees)),
-                                -1.0,
-                                1.0,
-                            )
-                        )
-                    )
-                    cur["moon_separation"] = round(float(sep), 1)
-                    cur["moon_glare"] = bool(
-                        illumination >= 0.5 and moon_alt.degrees > 10 and sep < 60
-                    )
-
-                    # Brightness estimation
-                    cur.update(
-                        calculate_brightness(
-                            sat, tc, eph, obs_pos, cur["distance_km"], cur["max_alt"]
-                        )
-                    )
-
-                    # Favorites: ISS (25544), Hubble (20580), Tiangong (48274)
-                    is_fav = norad in FAVORITES
-                    fav_name = FAVORITES.get(norad)
-
-                    cur["is_favorite"] = is_fav
-                    cur["favorite_name"] = fav_name
-
-                    # Cloud forecast from Open-Meteo
-                    cloud_pct = get_cloud_cover_for_time(cloud_forecast, cur["culm"])
-                    cur["cloud_cover"] = cloud_pct
-                    c_icon, c_str, c_desc, c_col = get_cloud_meta(cloud_pct)
-                    cur["cloud_icon"] = c_icon
-                    cur["cloud_pct_str"] = c_str
-                    cur["cloud_desc"] = c_desc
-                    cur["cloud_color"] = c_col
-
-                    # Two classifications:
-                    # 1. Geometrically visible:
-                    #    - Minimum elevation >= 10.0°
-                    #    - Sun below horizon (sun_alt < 0.0°)
-                    #    - Satellite illuminated by sun (sunlit == True)
-                    is_geom_vis = (cur["max_alt"] >= MIN_ELEVATION) and (cur["sun_alt"] < 0.0) and cur["sunlit"]
-                    cur["is_geom_visible"] = is_geom_vis
-
-                    # 2. Weather visible:
-                    #    - Geometrically visible AND clouds < 40%
-                    is_weather_vis = is_geom_vis and (cloud_pct is None or cloud_pct < CLOUDY_THRESHOLD)
-                    cur["is_weather_visible"] = is_weather_vis
-
-                    # Naked-eye magnitude limit (<= 3.5 mag)
-                    is_naked_eye = (cur["est_mag"] is not None and cur["est_mag"] <= DEFAULT_MAX_MAGNITUDE)
-                    cur["is_naked_eye_mag"] = is_naked_eye
-
-                    # Combined visibility (geometrically visible, clouds < 50%, and mag <= 3.5)
-                    is_vis = is_geom_vis and is_naked_eye and (cloud_pct is None or cloud_pct < DEFAULT_MAX_CLOUDS)
-                    cur["is_visible"] = is_vis
-
-                    # Explanatory reasons when not visible
-                    reasons = []
-                    if cur["max_alt"] < MIN_ELEVATION:
-                        reasons.append(f"Too low ({cur['max_alt']}° < {MIN_ELEVATION:.0f}°)")
-                    if cur["sun_alt"] >= 0.0:
-                        reasons.append(f"Daytime pass (Sun {cur['sun_alt']:+.1f}°)")
-                    if not cur["sunlit"]:
-                        reasons.append("In Earth's shadow (dimmed)")
-                    if is_geom_vis:
-                        if not is_naked_eye:
-                            reasons.append(f"Faint magnitude (Mag {cur['est_mag']:+.1f} > {DEFAULT_MAX_MAGNITUDE})")
-                        if cloud_pct is not None and cloud_pct >= DEFAULT_MAX_CLOUDS:
-                            reasons.append(f"Cloudy ({cloud_pct}% ≥ {DEFAULT_MAX_CLOUDS}%)")
-                    cur["invisibility_reason"] = ", ".join(reasons) if reasons else "Fully visible"
-
-                    del cur["t_culm"]
                     passes.append(cur)
                 cur = {}
+
+    check_cancel()
+    report(87, f"Computing Sun, Moon and brightness for {len(passes)} passes...")
+    if passes:
+        t_culm = ts.tt_jd(np.array([p["t_culm"] for p in passes]))
+        obs_at = obs_pos.at(t_culm)
+        sun_alt_all = obs_at.observe(sun).apparent().altaz()[0].degrees
+        moon_alt_all, moon_az_all, _ = obs_at.observe(moon).apparent().altaz()
+        phase_all = almanac.moon_phase(eph, t_culm).degrees
+        sat_km = np.array([p["sat_km"] for p in passes]).T
+        sun_km = (sun - earth).at(t_culm).position.km
+        obs_km = observer.at(t_culm).position.km
+        sunlit_all = sunlit_mask(sat_km, sun_km)
+        beta_all = phase_angles(sat_km, sun_km, obs_km)
+
+    now_utc = datetime.now(timezone.utc)
+    for i, cur in enumerate(passes):
+        sat = cur["sat"]
+        norad = sat.model.satnum
+        cur["name"] = sat.name
+        cur["norad"] = norad
+        cur["speed_kms"] = float(np.linalg.norm(cur.pop("sat_vel")))
+        del cur["sat_km"], cur["t_culm"]
+        epoch_utc = sat.epoch.utc_datetime()
+        tle_age_days = (now_utc - epoch_utc).total_seconds() / 86400.0
+        cur["tle_epoch"] = epoch_utc.astimezone(tz)
+        cur["tle_epoch_utc"] = epoch_utc
+        cur["tle_age_days"] = round(tle_age_days, 1)
+        cur["tle_old"] = tle_age_days > 3.0
+        cur["tz"] = tz
+        cur["tz_name"] = tz_name
+        cur["tz_abbr"] = format_tz_name(cur["culm"])
+
+        cur["sun_alt"] = round(float(sun_alt_all[i]), 1)
+        cur["sunlit"] = bool(sunlit_all[i])
+        cur["twilight"] = classify_twilight(cur["sun_alt"])
+
+        moon_alt = float(moon_alt_all.degrees[i])
+        moon_az = float(moon_az_all.degrees[i])
+        phase_deg = float(phase_all[i])
+        illumination = (1.0 - np.cos(np.radians(phase_deg))) / 2.0
+        cur["moon_phase_name"] = moon_phase_name(phase_deg)
+        cur["moon_illumination"] = round(illumination * 100)
+        cur["moon_alt"] = round(moon_alt, 1)
+        cur["moon_az"] = round(moon_az, 1)
+        sep = np.degrees(
+            np.arccos(
+                np.clip(
+                    np.sin(np.radians(cur["max_alt"])) * np.sin(np.radians(moon_alt))
+                    + np.cos(np.radians(cur["max_alt"]))
+                    * np.cos(np.radians(moon_alt))
+                    * np.cos(np.radians(cur["culm_az"] - moon_az)),
+                    -1.0,
+                    1.0,
+                )
+            )
+        )
+        cur["moon_separation"] = round(float(sep), 1)
+        cur["moon_glare"] = bool(
+            illumination >= 0.5 and moon_alt > 10 and sep < 60
+        )
+
+        cur.update(calculate_brightness(sat, beta_all[i], cur["distance_km"], cur["max_alt"]))
+
+        is_fav = norad in FAVORITES
+        fav_name = FAVORITES.get(norad)
+
+        cur["is_favorite"] = is_fav
+        cur["favorite_name"] = fav_name
+
+        cloud_pct = get_cloud_cover_for_time(cloud_forecast, cur["culm"])
+        cur["cloud_cover"] = cloud_pct
+        c_str, c_desc = get_cloud_meta(cloud_pct)
+        cur["cloud_pct_str"] = c_str
+        cur["cloud_desc"] = c_desc
+
+        is_geom_vis = (cur["max_alt"] >= MIN_ELEVATION) and (cur["sun_alt"] < 0.0) and cur["sunlit"]
+        cur["is_geom_visible"] = is_geom_vis
+
+        is_weather_vis = is_geom_vis and (cloud_pct is None or cloud_pct < CLOUDY_THRESHOLD)
+        cur["is_weather_visible"] = is_weather_vis
+
+        is_naked_eye = (cur["est_mag"] is not None and cur["est_mag"] <= DEFAULT_MAX_MAGNITUDE)
+        cur["is_naked_eye_mag"] = is_naked_eye
+
+        is_vis = is_geom_vis and is_naked_eye and (cloud_pct is None or cloud_pct < DEFAULT_MAX_CLOUDS)
+        cur["is_visible"] = is_vis
+
+        reasons = []
+        if cur["max_alt"] < MIN_ELEVATION:
+            reasons.append(f"Too low ({cur['max_alt']}° < {MIN_ELEVATION:.0f}°)")
+        if cur["sun_alt"] >= 0.0:
+            reasons.append(f"Daytime pass (Sun {cur['sun_alt']:+.1f}°)")
+        if not cur["sunlit"]:
+            reasons.append("In Earth's shadow (dimmed)")
+        if is_geom_vis:
+            if not is_naked_eye:
+                reasons.append(f"Faint magnitude (Mag {cur['est_mag']:+.1f} > {DEFAULT_MAX_MAGNITUDE})")
+            if cloud_pct is not None and cloud_pct >= DEFAULT_MAX_CLOUDS:
+                reasons.append(f"Cloudy ({cloud_pct}% ≥ {DEFAULT_MAX_CLOUDS}%)")
+        cur["invisibility_reason"] = ", ".join(reasons) if reasons else "Fully visible"
 
     if min_elev == 0.0 and fetch_weather:
         try:
@@ -602,21 +580,3 @@ if __name__ == "__main__":
             f"{p['culm']:%d.%m. %H:%M} | {fav}{p['name']} | Mag {p['est_mag']:+.1f} | "
             f"max {p['max_alt']}° | Sun {p['sun_alt']}° | Clouds {p['cloud_pct_str']}"
         )
-
-
-
-
-
-
-
-
-
- 
-
-
-
-
-
-
-
-

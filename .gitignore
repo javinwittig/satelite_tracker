@@ -1,0 +1,28 @@
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# Editors / tools
+.vscode/
+.idea/
+.wakatime-project
+.DS_Store
+Thumbs.db
+
+# Runtime caches (downloaded or generated automatically on first run)
+sat_cache/
+cache/
+map_tiles/*.jpg
+earth_blue_marble.jpg
+
+# Build output
+build/
+dist/

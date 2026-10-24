@@ -1,3 +1,4 @@
+import csv
 import os
 from datetime import datetime, timezone
 
@@ -12,27 +13,31 @@ from PyQt6.QtCore import (
     QThreadPool,
     pyqtSignal,
 )
-from PyQt6.QtGui import QColor, QFont, QIcon, QPixmap
+from PyQt6.QtGui import QColor, QFont, QGuiApplication, QPalette, QPixmap
 from PyQt6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QFileDialog,
     QFrame,
     QGridLayout,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QProgressBar,
     QPushButton,
     QSlider,
     QSplitter,
     QTableView,
+    QTextBrowser,
     QVBoxLayout,
     QWidget,
 )
 
 from constants import (
     CLOUDY_THRESHOLD,
+    DATA_DIR,
     DEFAULT_MAX_CLOUDS,
     DEFAULT_MAX_MAGNITUDE,
     FAVORITES,
@@ -53,8 +58,6 @@ class LoaderSignals(QObject):
 
 
 class ImageLoader(QRunnable):
-    """Worker thread: downloads the image if it is not cached."""
-
     def __init__(self, lat, lon, path):
         super().__init__()
         self.lat, self.lon, self.path = lat, lon, path
@@ -121,23 +124,23 @@ class PassTableModel(QAbstractTableModel):
         reason = p.get("invisibility_reason", "")
         if not p.get("is_geom_visible"):
             if not p.get("sunlit"):
-                text, color = "Earth shadow", "#888888"
+                text = "Earth shadow"
             elif p.get("sun_alt", 0) >= 0:
-                text, color = "Daylight", "#888888"
+                text = "Daylight"
             else:
-                text, color = "Low pass", "#888888"
+                text = "Low pass"
         elif cloud is not None and cloud >= CLOUDY_THRESHOLD:
-            text, color = "Cloudy", "#e67e22"
+            text = "Cloudy"
         elif mag is not None and mag > DEFAULT_MAX_MAGNITUDE:
-            text, color = "Faint", "#74b9ff"
+            text = "Faint"
         else:
-            text, color = "Visible", "#2ecc71"
+            text = "Visible"
         tooltip = f"{text}: {reason}" if reason else text
         if p.get("brightness_uncertain"):
             tooltip += " | Brightness uncertain (tumbling)"
         if p.get("tle_old"):
             tooltip += f" | TLE {p.get('tle_age_days', 0)} days old"
-        return text, color, tooltip
+        return text, tooltip
 
     def data(self, index, role=Qt.ItemDataRole.DisplayRole):
         if not index.isValid():
@@ -152,7 +155,7 @@ class PassTableModel(QAbstractTableModel):
                 return int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             return int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
-        status_text, status_color, status_tip = self.status_for(p)
+        status_text, status_tip = self.status_for(p)
         mag = p.get("est_mag")
         cloud = p.get("cloud_cover")
         duration = self.duration_seconds(p)
@@ -172,14 +175,14 @@ class PassTableModel(QAbstractTableModel):
 
         if role == Qt.ItemDataRole.DisplayRole:
             if col == 0:
-                return "★" if p.get("is_favorite") else ""
+                return "*" if p.get("is_favorite") else ""
             if col == 1:
                 return p.get("name", "")
             if col == 2:
                 culm = p.get("culm")
                 if culm is None:
                     return "?"
-                return f"{culm:%d.%m.%Y %H:%M:%S} {p.get('tz_abbr', '')}".strip()
+                return f"{culm:%d.%m. %H:%M:%S} {p.get('tz_abbr', '')}".strip()
             if col == 3:
                 return f"{mag:+.1f}" if mag is not None else "?"
             if col == 4:
@@ -194,17 +197,6 @@ class PassTableModel(QAbstractTableModel):
                     return "--"
                 return f"{duration // 60}m {duration % 60:02d}s"
             return None
-
-        if role == Qt.ItemDataRole.ForegroundRole:
-            if col == 0 and p.get("is_favorite"):
-                return QColor("#f1c40f")
-            if col == 6:
-                return QColor(status_color)
-            if not p.get("is_geom_visible"):
-                return QColor("#888888")
-            if p.get("is_favorite"):
-                return QColor("#f1c40f")
-            return QColor("#ecf0f1")
 
         if role == Qt.ItemDataRole.FontRole and p.get("is_favorite"):
             font = QFont()
@@ -242,15 +234,16 @@ class PassFilterProxyModel(QSortFilterProxyModel):
     def filterAcceptsRow(self, source_row, source_parent):
         model = self.sourceModel()
         p = model.pass_at(source_row) if model else None
-        if p is None:
-            return False
+        return p is not None and self.accepts(p)
+
+    def accepts(self, p, ignore_clouds=False):
         if self.visible_only and not p.get("is_geom_visible"):
             return False
         if self.favorites_only and not p.get("is_favorite"):
             return False
         if p.get("est_mag") is not None and p.get("est_mag") > self.max_mag:
             return False
-        if p.get("cloud_cover") is not None and p.get("cloud_cover") > self.max_clouds:
+        if not ignore_clouds and p.get("cloud_cover") is not None and p.get("cloud_cover") > self.max_clouds:
             return False
         if self.search:
             name = p.get("name", "").lower()
@@ -283,8 +276,6 @@ class SatSignals(QObject):
 
 
 class SatLoader(QRunnable):
-    """Worker thread: computes satellite passes and weather over the tile."""
-
     def __init__(self, lat, lon, tz=None, elevation_m=0.0):
         super().__init__()
         self.lat, self.lon = lat, lon
@@ -322,18 +313,29 @@ class SatLoader(QRunnable):
             self.signals.failed.emit(str(e))
 
 
+def _fmt_time(value):
+    return f"{value:%Y-%m-%d %H:%M:%S}" if value is not None else ""
+
+
+def _fmt_num(value, digits):
+    return f"{value:.{digits}f}" if value is not None else ""
+
+
 class TileDetails(QWidget):
-    def __init__(self, x, y):
+    def __init__(self, x, y, location=None):
         super().__init__()
         self.x, self.y = x, y
         lat, lon = tile_to_latlon(x, y)
-        self.lat, self.lon = lat, lon
         self.elevation_m = 0.0
         self.free_location = False
+        if location is not None:
+            lat, lon = location["latitude"], location["longitude"]
+            self.elevation_m = location.get("elevation") or 0.0
+            self.free_location = True
+        self.lat, self.lon = lat, lon
         self.load_token = 0
         self.geocode_loader = None
 
-        # Derive tile's local timezone
         self.tile_tz, self.tile_tz_name = get_timezone_for_latlon(lat, lon)
         self.local_tz = datetime.now().astimezone().tzinfo
         self.tz = self.tile_tz
@@ -348,15 +350,11 @@ class TileDetails(QWidget):
         self.sat_loader = None
 
         self.setWindowTitle(f"Satellite Tracker - Tile ({x}, {y})")
-        self.resize(1060, 720)
 
         main_layout = QHBoxLayout()
         main_layout.setContentsMargins(12, 12, 12, 12)
         main_layout.setSpacing(12)
 
-        # =======================================================
-        # LEFT PANEL: NASA Image & Tile Info
-        # =======================================================
         left_panel = QWidget()
         left_layout = QVBoxLayout()
         left_layout.setContentsMargins(0, 0, 0, 0)
@@ -364,12 +362,10 @@ class TileDetails(QWidget):
 
         self.label = QLabel(
             f"<b>Tile ({x}, {y})</b> — Lat: {lat:.4f}°, Lon: {lon:.4f}°<br>"
-            f"<span style='color: #3498db; font-size: 11px;'>Timezone: {self.tz_name} ({tz_abbr})</span>"
+            f"Timezone: {self.tz_name} ({tz_abbr})"
         )
-        self.label.setStyleSheet("font-size: 13px;")
 
         observer_box = QFrame()
-        observer_box.setStyleSheet("background-color: #2b2b2b; border-radius: 4px; padding: 6px;")
         observer_layout = QVBoxLayout(observer_box)
         observer_layout.setContentsMargins(8, 8, 8, 8)
         observer_layout.setSpacing(4)
@@ -380,16 +376,12 @@ class TileDetails(QWidget):
         lat_lbl = QLabel("Lat")
         lon_lbl = QLabel("Lon")
         elev_lbl = QLabel("Elev m")
-        for lbl in (lat_lbl, lon_lbl, elev_lbl):
-            lbl.setStyleSheet("color: #aaa; font-size: 11px;")
         self.txt_lat = QLineEdit(f"{lat:.4f}")
         self.txt_lon = QLineEdit(f"{lon:.4f}")
-        self.txt_elev = QLineEdit("0")
+        self.txt_elev = QLineEdit(f"{self.elevation_m:.0f}")
         self.txt_lat.setToolTip("Observer latitude in degrees")
         self.txt_lon.setToolTip("Observer longitude in degrees")
         self.txt_elev.setToolTip("Observer elevation above sea level in metres")
-        for field in (self.txt_lat, self.txt_lon, self.txt_elev):
-            field.setStyleSheet("padding: 2px; border-radius: 3px;")
         coords.addWidget(lat_lbl, 0, 0)
         coords.addWidget(self.txt_lat, 0, 1)
         coords.addWidget(lon_lbl, 0, 2)
@@ -402,25 +394,21 @@ class TileDetails(QWidget):
         place_row = QHBoxLayout()
         self.txt_place = QLineEdit()
         self.txt_place.setPlaceholderText("Search place name...")
-        self.txt_place.setStyleSheet("padding: 2px; border-radius: 3px;")
         self.txt_place.returnPressed.connect(self.search_place)
         self.btn_geocode = QPushButton("Search")
-        self.btn_geocode.setStyleSheet(
-            "QPushButton { background-color: #444; color: #eee; border-radius: 3px; padding: 3px 8px; font-size: 11px; }"
-            "QPushButton:hover { background-color: #555; }"
-        )
         self.btn_geocode.clicked.connect(self.search_place)
         place_row.addWidget(self.txt_place, stretch=1)
         place_row.addWidget(self.btn_geocode)
 
         use_row = QHBoxLayout()
-        self.geocode_label = QLabel("Tile centre in use")
-        self.geocode_label.setStyleSheet("color: #888; font-size: 11px;")
+        if location is not None:
+            place = location.get("name") or "Custom observer location"
+            if location.get("country"):
+                place = f"{place}, {location['country']}"
+            self.geocode_label = QLabel(place)
+        else:
+            self.geocode_label = QLabel("Tile centre in use")
         self.btn_use_location = QPushButton("Use location")
-        self.btn_use_location.setStyleSheet(
-            "QPushButton { background-color: #2980b9; color: white; border-radius: 3px; padding: 3px 8px; font-size: 11px; }"
-            "QPushButton:hover { background-color: #3498db; }"
-        )
         self.btn_use_location.clicked.connect(self.use_location)
         use_row.addWidget(self.geocode_label, stretch=1)
         use_row.addWidget(self.btn_use_location)
@@ -429,22 +417,16 @@ class TileDetails(QWidget):
         observer_layout.addLayout(place_row)
         observer_layout.addLayout(use_row)
 
-        base = os.path.dirname(os.path.abspath(__file__))
-        os.makedirs(os.path.join(base, "map_tiles"), exist_ok=True)
-        path = os.path.join(base, "map_tiles", f"map_{x * RESOLUTION}_{y * RESOLUTION}.jpg")
+        os.makedirs(os.path.join(DATA_DIR, "map_tiles"), exist_ok=True)
+        path = os.path.join(DATA_DIR, "map_tiles", f"map_{x * RESOLUTION}_{y * RESOLUTION}.jpg")
         self.image_path = path
 
         self.image_label = QLabel("Loading NASA satellite image...")
         self.image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.image_label.setFixedSize(400, 400)
-        self.image_label.setStyleSheet("background-color: #1e1e1e; border: 1px solid #444; border-radius: 4px;")
 
-        # Weather card overview
         self.weather_card = QLabel("Loading weather & cloud forecast...")
         self.weather_card.setWordWrap(True)
-        self.weather_card.setStyleSheet(
-            "background-color: #2b2b2b; color: #ddd; padding: 10px; border-radius: 4px; font-size: 12px;"
-        )
 
         left_layout.addWidget(self.label)
         left_layout.addWidget(observer_box)
@@ -456,20 +438,14 @@ class TileDetails(QWidget):
         left_panel.setMinimumWidth(420)
         left_panel.setMaximumWidth(460)
 
-        # =======================================================
-        # RIGHT PANEL: Satellite Passes, Filters, Details, 3D
-        # =======================================================
         right_panel = QWidget()
         right_layout = QVBoxLayout()
         right_layout.setContentsMargins(0, 0, 0, 0)
         right_layout.setSpacing(6)
 
-        # Header with title & stats
         header_layout = QHBoxLayout()
         self.sat_title = QLabel("<b>Satellite passes (next 48 h):</b>")
-        self.sat_title.setStyleSheet("font-size: 15px;")
         self.sat_count_label = QLabel("Calculating passes...")
-        self.sat_count_label.setStyleSheet("color: #888; font-size: 12px;")
         header_layout.addWidget(self.sat_title)
         header_layout.addStretch()
 
@@ -484,10 +460,8 @@ class TileDetails(QWidget):
         header_layout.addWidget(self.sat_count_label)
         right_layout.addLayout(header_layout)
 
-        # Loading progress
         load_row = QHBoxLayout()
         self.progress_label = QLabel("")
-        self.progress_label.setStyleSheet("color: #95a5a6; font-size: 11px;")
         self.progress_bar = QProgressBar()
         self.progress_bar.setRange(0, 100)
         self.progress_bar.setValue(0)
@@ -496,10 +470,6 @@ class TileDetails(QWidget):
         self.progress_bar.setVisible(False)
         self.btn_cancel = QPushButton("Cancel")
         self.btn_cancel.setVisible(False)
-        self.btn_cancel.setStyleSheet(
-            "QPushButton { background-color: #444; color: #eee; border-radius: 3px; padding: 3px 8px; font-size: 11px; }"
-            "QPushButton:hover { background-color: #555; }"
-        )
         self.btn_cancel.clicked.connect(self.cancel_loading)
         load_row.addWidget(self.progress_label)
         load_row.addStretch()
@@ -507,19 +477,15 @@ class TileDetails(QWidget):
         load_row.addWidget(self.btn_cancel)
         right_layout.addLayout(load_row)
 
-        # Filter box
         filter_box = QFrame()
-        filter_box.setStyleSheet("background-color: #2b2b2b; border-radius: 4px; padding: 6px;")
         filter_layout = QVBoxLayout(filter_box)
         filter_layout.setContentsMargins(8, 8, 8, 8)
         filter_layout.setSpacing(6)
 
-        # Row 1: Checkboxes & Reset
         filter_row1 = QHBoxLayout()
         self.chk_visible = QCheckBox("Only visible")
         self.chk_visible.setToolTip("Elevation ≥ 10°, dark sky, satellite illuminated")
         self.chk_visible.setChecked(True)
-        self.chk_visible.setStyleSheet("font-weight: bold; color: #4cd137;")
         self.chk_visible.toggled.connect(self.apply_filter)
 
         self.chk_favorites_only = QCheckBox("Only favorites")
@@ -534,10 +500,6 @@ class TileDetails(QWidget):
 
         self.btn_reset_filters = QPushButton("Reset")
         self.btn_reset_filters.setToolTip("Reset filters to default (Visible ≤3.5 Mag, ≤50% clouds)")
-        self.btn_reset_filters.setStyleSheet(
-            "QPushButton { background-color: #444; color: #eee; border-radius: 3px; padding: 3px 8px; font-size: 11px; }"
-            "QPushButton:hover { background-color: #555; }"
-        )
         self.btn_reset_filters.clicked.connect(self.reset_filters)
 
         filter_row1.addWidget(self.chk_visible)
@@ -548,13 +510,10 @@ class TileDetails(QWidget):
         filter_row1.addStretch()
         filter_row1.addWidget(self.btn_reset_filters)
 
-        # Row 2: Sliders for Cloud cover and Magnitude
         filter_row2 = QHBoxLayout()
         filter_row2.setSpacing(8)
 
-        # Max Cloud Cover slider
         self.lbl_cloud = QLabel(f"Max Clouds: ≤ {DEFAULT_MAX_CLOUDS}%")
-        self.lbl_cloud.setStyleSheet("color: #ddd; font-size: 11px; min-width: 105px;")
         self.slider_clouds = QSlider(Qt.Orientation.Horizontal)
         self.slider_clouds.setRange(0, 100)
         self.slider_clouds.setSingleStep(5)
@@ -564,9 +523,7 @@ class TileDetails(QWidget):
         self.slider_clouds.setToolTip("Filter passes by maximum cloud cover percentage (default 50%)")
         self.slider_clouds.valueChanged.connect(self.on_cloud_slider_changed)
 
-        # Max Magnitude slider (-2.0 to 6.0 in 0.1 steps, mapped to -20 .. 60)
         self.lbl_mag = QLabel(f"Max Mag: ≤ {DEFAULT_MAX_MAGNITUDE:+.1f}")
-        self.lbl_mag.setStyleSheet("color: #ddd; font-size: 11px; min-width: 95px;")
         self.slider_mag = QSlider(Qt.Orientation.Horizontal)
         self.slider_mag.setRange(-20, 60)
         self.slider_mag.setSingleStep(1)
@@ -582,14 +539,11 @@ class TileDetails(QWidget):
         filter_row2.addWidget(self.lbl_mag)
         filter_row2.addWidget(self.slider_mag, stretch=1)
 
-        # Row 3: Search text box
         filter_row3 = QHBoxLayout()
         search_lbl = QLabel("Search:")
-        search_lbl.setStyleSheet("color: #aaa; font-size: 11px;")
         self.txt_search = QLineEdit()
         self.txt_search.setPlaceholderText("Search satellite name or NORAD ID...")
         self.txt_search.textChanged.connect(self.apply_filter)
-        self.txt_search.setStyleSheet("padding: 3px; border-radius: 3px;")
 
         filter_row3.addWidget(search_lbl)
         filter_row3.addWidget(self.txt_search)
@@ -599,7 +553,6 @@ class TileDetails(QWidget):
         filter_layout.addLayout(filter_row3)
         right_layout.addWidget(filter_box)
 
-        # Satellite table
         self.pass_model = PassTableModel()
         self.pass_proxy = PassFilterProxyModel(self)
         self.pass_proxy.setSourceModel(self.pass_model)
@@ -614,6 +567,11 @@ class TileDetails(QWidget):
         self.sat_table.setSelectionMode(QTableView.SelectionMode.SingleSelection)
         self.sat_table.setEditTriggers(QTableView.EditTrigger.NoEditTriggers)
         self.sat_table.setAlternatingRowColors(True)
+        selection = self.sat_table.palette()
+        for group in (QPalette.ColorGroup.Active, QPalette.ColorGroup.Inactive):
+            selection.setColor(group, QPalette.ColorRole.Highlight, QColor("#cce8ff"))
+            selection.setColor(group, QPalette.ColorRole.HighlightedText, QColor("#000000"))
+        self.sat_table.setPalette(selection)
         self.sat_table.setWordWrap(False)
         self.sat_table.setTextElideMode(Qt.TextElideMode.ElideNone)
         self.sat_table.verticalHeader().setVisible(False)
@@ -625,32 +583,36 @@ class TileDetails(QWidget):
         table_header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         table_header.setStretchLastSection(True)
         self.sat_table.selectionModel().currentRowChanged.connect(self.on_current_row_changed)
+        self.cloud_notice = QLabel()
+        self.cloud_notice.setWordWrap(True)
+        self.cloud_notice.setVisible(False)
+        right_layout.addWidget(self.cloud_notice)
+
         right_layout.addWidget(self.sat_table, stretch=2)
 
-        # Pass Details card
-        self.details_label = QLabel("Click a pass for detailed visibility and orbit data.")
-        self.details_label.setWordWrap(True)
-        self.details_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        self.details_label.setStyleSheet(
-            "background-color: #2b2b2b; color: #ecf0f1; padding: 10px; border-radius: 4px; font-size: 12px; min-height: 120px;"
-        )
-        right_layout.addWidget(self.details_label, stretch=1)
+        self.details_box = QTextBrowser()
+        self.details_box.setReadOnly(True)
+        self.details_box.setMinimumHeight(120)
+        self.details_box.setPlaceholderText("Select a pass in the table to see its details.")
+        right_layout.addWidget(self.details_box, stretch=1)
 
-        # 3D View button
         self.btn_3d = QPushButton("Open 3D globe")
-        self.btn_3d.setEnabled(False)
         self.btn_3d.setMinimumHeight(34)
-        self.btn_3d.setStyleSheet(
-            "QPushButton { background-color: #2980b9; color: white; font-weight: bold; border-radius: 4px; padding: 6px; }"
-            "QPushButton:hover { background-color: #3498db; }"
-            "QPushButton:disabled { background-color: #555; color: #888; }"
-        )
         self.btn_3d.clicked.connect(self.open_3d)
-        right_layout.addWidget(self.btn_3d)
+
+        self.btn_export = QPushButton("Export CSV")
+        self.btn_export.setEnabled(False)
+        self.btn_export.setMinimumHeight(34)
+        self.btn_export.setToolTip("Save the passes currently shown in the table to a CSV file")
+        self.btn_export.clicked.connect(self.export_csv)
+
+        button_row = QHBoxLayout()
+        button_row.addWidget(self.btn_3d, stretch=1)
+        button_row.addWidget(self.btn_export)
+        right_layout.addLayout(button_row)
 
         right_panel.setLayout(right_layout)
 
-        # Add panels
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.addWidget(left_panel)
         splitter.addWidget(right_panel)
@@ -661,14 +623,21 @@ class TileDetails(QWidget):
         self.setLayout(main_layout)
         self.setMinimumSize(980, 700)
 
-        # Start background jobs
+        screen = QGuiApplication.primaryScreen().availableGeometry()
+        width = max(980, int(screen.width() * 0.65))
+        height = max(700, int(screen.height() * 0.65))
+        self.resize(width, height)
+        self.move(
+            screen.x() + max(0, (screen.width() - width) // 2),
+            screen.y() + max(0, (screen.height() - height) // 2),
+        )
+
         self.loader = ImageLoader(lat, lon, path)
         self.loader.signals.finished.connect(self.show_image)
         self.loader.signals.failed.connect(self.show_error)
         QThreadPool.globalInstance().start(self.loader)
         self.start_loading()
 
-    # ---------- image ----------
     def show_image(self, path):
         if path != self.image_path:
             return
@@ -686,12 +655,11 @@ class TileDetails(QWidget):
         if path == self.image_path:
             self.image_label.setText("Could not load NASA image.")
 
-    # ---------- location ----------
     def update_location_label(self):
         title = "Observer" if getattr(self, "free_location", False) else f"Tile ({self.x}, {self.y})"
         self.label.setText(
             f"<b>{title}</b> — Lat: {self.lat:.4f}°, Lon: {self.lon:.4f}°, Elev: {self.elevation_m:.0f} m<br>"
-            f"<span style='color: #3498db; font-size: 11px;'>Timezone: {self.tz_name} ({format_tz_name(datetime.now(self.tz))})</span>"
+            f"Timezone: {self.tz_name} ({format_tz_name(datetime.now(self.tz))})"
         )
 
     def search_place(self):
@@ -742,7 +710,7 @@ class TileDetails(QWidget):
 
         row, col = latlon_to_tile(lat, lon)
         new_path = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)),
+            DATA_DIR,
             "map_tiles",
             f"map_{row * RESOLUTION}_{col * RESOLUTION}.jpg",
         )
@@ -762,9 +730,11 @@ class TileDetails(QWidget):
             self.sat_loader.cancel()
         self.all_passes = []
         self.selected_pass = None
+        self.update_3d_button()
         self.pass_model.set_passes([])
-        self.btn_3d.setEnabled(False)
-        self.details_label.setText("Loading passes...")
+        self.btn_export.setEnabled(False)
+        self.cloud_notice.setVisible(False)
+        self.details_box.setText("Loading passes...")
 
         self.sat_loader = SatLoader(
             self.lat, self.lon, tz=self.tz, elevation_m=self.elevation_m
@@ -784,7 +754,6 @@ class TileDetails(QWidget):
         self.on_load_progress(0, "Starting...")
         QThreadPool.globalInstance().start(self.sat_loader)
 
-    # ---------- slider listeners ----------
     def on_cloud_slider_changed(self, val):
         self.lbl_cloud.setText(f"Max Clouds: ≤ {val}%")
         self.apply_filter()
@@ -803,7 +772,6 @@ class TileDetails(QWidget):
         self.txt_search.clear()
         self.apply_filter()
 
-    # ---------- loading ----------
     def on_load_progress(self, pct, text):
         self.progress_bar.setValue(pct)
         self.progress_label.setText(text)
@@ -817,8 +785,16 @@ class TileDetails(QWidget):
         self.progress_bar.setVisible(False)
         self.btn_cancel.setVisible(False)
         self.sat_count_label.setText("Cancelled")
+        self.details_box.setText("Loading cancelled.")
 
-    # ---------- time zone ----------
+    def closeEvent(self, event):
+        self.load_token += 1
+        if self.sat_loader:
+            self.sat_loader.cancel()
+        if self.view3d is not None:
+            self.view3d.close()
+        super().closeEvent(event)
+
     def on_timezone_changed(self, index):
         mode = self.cmb_timezone.currentData()
         if mode == "local":
@@ -856,9 +832,8 @@ class TileDetails(QWidget):
             bottom = self.pass_model.index(self.pass_model.rowCount() - 1, self.pass_model.columnCount() - 1)
             self.pass_model.dataChanged.emit(top, bottom)
             self.pass_proxy.invalidate()
-            self.apply_filter()
+        self.apply_filter()
 
-    # ---------- satellites ----------
     def show_satellites(self, passes):
         self.all_passes = passes
         self.pass_model.set_passes(self.all_passes)
@@ -890,9 +865,10 @@ class TileDetails(QWidget):
         self.btn_cancel.setVisible(False)
         self.progress_label.setVisible(False)
         self.sat_count_label.setText("Error")
-        self.details_label.setText(f"Error calculating passes: {msg}")
-        self.btn_3d.setEnabled(False)
+        self.details_box.setText(f"Error calculating passes: {msg}")
+        self.btn_export.setEnabled(False)
         self.selected_pass = None
+        self.update_3d_button()
 
     def apply_filter(self):
         visible_only = self.chk_visible.isChecked()
@@ -902,7 +878,12 @@ class TileDetails(QWidget):
         max_mag = self.slider_mag.value() / 10.0
 
         self.pass_proxy.set_filters(visible_only, favorites_only, max_clouds, max_mag, search_query)
+        self.btn_export.setEnabled(self.pass_proxy.rowCount() > 0)
+        cloud_message = self.update_cloud_notice(max_clouds)
         if not self.all_passes:
+            if not self.progress_bar.isVisible() and self.sat_count_label.text() != "Cancelled":
+                self.sat_count_label.setText("0 passes found")
+                self.details_box.setText("No satellite passes found for this location in the next 48 h.")
             return
 
         total_geom = sum(1 for p in self.all_passes if p.get("is_geom_visible"))
@@ -913,19 +894,67 @@ class TileDetails(QWidget):
         )
 
         if self.pass_proxy.rowCount() == 0:
-            self.details_label.setText(
-                "No passes match the current filter settings. Try adjusting the sliders or unchecking 'Only visible'."
+            self.details_box.setText(
+                ""
+                if cloud_message
+                else "No passes match the current filter settings. Try adjusting the sliders or unchecking 'Only visible'."
             )
-            self.btn_3d.setEnabled(False)
             self.selected_pass = None
+            self.update_3d_button()
             return
 
-        self.sat_table.selectRow(0)
-        self.show_details(self.pass_proxy.index(0, 0))
+        if self.sat_table.currentIndex().isValid():
+            self.refresh_details()
+        else:
+            self.clear_details()
+
+    def update_3d_button(self):
+        if self.selected_pass:
+            self.btn_3d.setStyleSheet(
+                "QPushButton { background-color: #0067c0; color: white; border: none; border-radius: 4px; }"
+                "QPushButton:hover { background-color: #1975c5; }"
+            )
+        else:
+            self.btn_3d.setStyleSheet("")
+
+    def clear_details(self):
+        self.selected_pass = None
+        self.update_3d_button()
+        self.details_box.clear()
+
+    def update_cloud_notice(self, max_clouds):
+        cloudy = [
+            p for p in self.all_passes
+            if self.pass_proxy.accepts(p, ignore_clouds=True) and not self.pass_proxy.accepts(p)
+        ]
+        if not cloudy:
+            self.cloud_notice.setVisible(False)
+            return ""
+
+        covers = [p["cloud_cover"] for p in cloudy]
+        cover_text = f"{min(covers)}%" if min(covers) == max(covers) else f"{min(covers)}–{max(covers)}%"
+        count = len(cloudy)
+        plural = "pass is" if count == 1 else "passes are"
+        if self.pass_proxy.rowCount() == 0:
+            message = (
+                f"<b>Too cloudy:</b> no satellites can be seen because of clouds. "
+                f"{count} {plural} hidden because the forecast shows {cover_text} cloud cover "
+                f"(your limit is {max_clouds}%). Raise <i>Max Clouds</i> to show them anyway."
+            )
+        else:
+            message = (
+                f"{count} more {plural} hidden because it is too cloudy "
+                f"({cover_text} cloud cover, limit {max_clouds}%)."
+            )
+        self.cloud_notice.setText(message)
+        self.cloud_notice.setVisible(True)
+        return message
 
     def on_current_row_changed(self, current, previous):
         if current.isValid():
             self.show_details(self.pass_proxy.index(current.row(), 0))
+        else:
+            self.clear_details()
 
     def refresh_details(self):
         current = self.sat_table.currentIndex()
@@ -940,7 +969,7 @@ class TileDetails(QWidget):
             return
 
         self.selected_pass = p
-        self.btn_3d.setEnabled(True)
+        self.update_3d_button()
 
         is_fav = p.get("is_favorite", False)
         fav_name = p.get("favorite_name")
@@ -952,39 +981,39 @@ class TileDetails(QWidget):
         lines = []
         if is_fav:
             lines.append(
-                f"<div style='font-size: 15px; color: #f1c40f;'><b>★ {fav_name}</b> — "
+                f"<div><b>{fav_name}</b> — "
                 f"<b>{p['name']}</b> (NORAD {p['norad']})</div>"
             )
         else:
             lines.append(
-                f"<div style='font-size: 15px;'><b>{p['name']}</b> (NORAD {p['norad']})</div>"
+                f"<div><b>{p['name']}</b> (NORAD {p['norad']})</div>"
             )
 
         if is_geom and (cloud_pct is None or cloud_pct < 40) and (mag is None or mag <= 3.5):
-            vis_banner = "<div style='color: #2ecc71; font-size: 13px; font-weight: bold;'>Visible to the naked eye (clear sky and bright)</div>"
+            vis_banner = "<div><b>Visible to the naked eye (clear sky and bright)</b></div>"
         elif is_geom and cloud_pct is not None and cloud_pct >= 40:
-            vis_banner = f"<div style='color: #e67e22; font-size: 13px; font-weight: bold;'>Geometrically visible, but obscured by clouds ({cloud_pct}%)</div>"
+            vis_banner = f"<div><b>Geometrically visible, but obscured by clouds ({cloud_pct}%)</b></div>"
         elif is_geom and mag is not None and mag > 3.5:
-            vis_banner = f"<div style='color: #74b9ff; font-size: 13px; font-weight: bold;'>Geometrically visible, but faint (Mag {mag:+.1f} > 3.5)</div>"
+            vis_banner = f"<div><b>Geometrically visible, but faint (Mag {mag:+.1f} > 3.5)</b></div>"
         else:
-            vis_banner = f"<div style='color: #e74c3c; font-size: 13px; font-weight: bold;'>Not visible ({p.get('invisibility_reason')})</div>"
+            vis_banner = f"<div><b>Not visible ({p.get('invisibility_reason')})</b></div>"
         lines.append(vis_banner)
 
         if is_geom:
-            geom_html = "<span style='color: #2ecc71; font-weight: bold;'>Geometrically visible</span> (Elevation ≥ 10°, dark sky, sunlit)"
+            geom_html = "<b>Geometrically visible</b> (Elevation ≥ 10°, dark sky, sunlit)"
         else:
-            geom_html = f"<span style='color: #e74c3c; font-weight: bold;'>Geometrically not visible</span> ({p.get('invisibility_reason')})"
+            geom_html = f"<b>Geometrically not visible</b> ({p.get('invisibility_reason')})"
         lines.append(f"<b>Geometric visibility:</b> {geom_html}")
 
         if is_geom:
             if cloud_pct is not None and cloud_pct < 40:
-                cloud_vis_html = f"<span style='color: #2ecc71; font-weight: bold;'>Visible despite clouds (&lt; 40%)</span> ({cloud_pct}% cloud cover)"
+                cloud_vis_html = f"<b>Visible despite clouds (&lt; 40%)</b> ({cloud_pct}% cloud cover)"
             elif cloud_pct is not None:
-                cloud_vis_html = f"<span style='color: #e67e22; font-weight: bold;'>Obscured by clouds (&ge; 40%)</span> ({cloud_pct}% — observation unlikely despite geometry)"
+                cloud_vis_html = f"<b>Obscured by clouds (&ge; 40%)</b> ({cloud_pct}% — observation unlikely despite geometry)"
             else:
-                cloud_vis_html = "<span style='color: #888;'>Cloud forecast unavailable</span>"
+                cloud_vis_html = "Cloud forecast unavailable"
         else:
-            cloud_vis_html = "<span style='color: #888;'>— (Pass is not geometrically visible)</span>"
+            cloud_vis_html = "— (Pass is not geometrically visible)"
         lines.append(f"<b>Observation conditions:</b> {cloud_vis_html}")
 
         if mag is None:
@@ -994,12 +1023,12 @@ class TileDetails(QWidget):
                 "Extremely bright" if mag < -1 else ("Very bright" if mag < 1 else ("Clearly visible" if mag <= 3.5 else "Faint"))
             )
             naked_eye_note = (
-                "<span style='color: #2ecc71;'>(Naked-eye visible)</span>"
+                "(Naked-eye visible)"
                 if mag <= 3.5
-                else "<span style='color: #f39c12;'>(Faint — binoculars recommended)</span>"
+                else "(Faint — binoculars recommended)"
             )
             uncertain_note = (
-                " <span style='color: #f39c12;'>uncertain (tumbling)</span>"
+                " uncertain (tumbling)"
                 if p.get("brightness_uncertain")
                 else ""
             )
@@ -1013,14 +1042,14 @@ class TileDetails(QWidget):
                 parts.append(f"airmass {p['airmass']:.2f}")
             if p.get("extinction_mag") is not None:
                 parts.append(f"extinction +{p['extinction_mag']:.2f} mag")
-            lines.append(f"<span style='color: #95a5a6; font-size: 11px;'>{' | '.join(parts)}</span>")
+            lines.append(f"{' | '.join(parts)}")
 
         sun_alt = p.get("sun_alt", 0.0)
         sun_desc = "below horizon" if sun_alt < 0 else "above horizon (day)"
         sunlit_html = (
-            "<span style='color: #2ecc71;'>Yes (in sunlight)</span>"
+            "Yes (in sunlight)"
             if p.get("sunlit")
-            else "<span style='color: #e74c3c;'>No (in Earth's shadow)</span>"
+            else "No (in Earth's shadow)"
         )
         twilight = p.get("twilight", classify_twilight(sun_alt))
         lines.append(
@@ -1035,16 +1064,14 @@ class TileDetails(QWidget):
             )
             if p.get("moon_glare") and self.chk_moon_warning.isChecked():
                 lines.append(
-                    f"<span style='color: #f39c12;'><b>Moon glare warning:</b> bright Moon "
-                    f"{p.get('moon_separation', 0):.0f}° from the satellite</span>"
+                    f"<b>Moon glare warning:</b> bright Moon "
+                    f"{p.get('moon_separation', 0):.0f}° from the satellite"
                 )
 
-        c_icon = p.get("cloud_icon", "☁️")
         c_pct = p.get("cloud_pct_str", "--%")
         c_desc = p.get("cloud_desc", "No data")
-        c_col = p.get("cloud_color", "#aaa")
         lines.append(
-            f"<b>Cloud forecast (Open-Meteo):</b> {c_icon} <span style='color: {c_col}; font-weight: bold;'>{c_pct}</span> ({c_desc})"
+            f"<b>Cloud forecast (Open-Meteo):</b> <b>{c_pct}</b> ({c_desc})"
         )
 
         if "rise" in p:
@@ -1073,7 +1100,7 @@ class TileDetails(QWidget):
             lines.append(f"<b>TLE epoch:</b> {p['tle_epoch']:%d.%m.%Y %H:%M} {tz_abbr}")
         else:
             age_warn = (
-                " <span style='color: #e67e22;'>older than 3 days — predictions may drift</span>"
+                " older than 3 days — predictions may drift"
                 if p.get("tle_old")
                 else ""
             )
@@ -1081,20 +1108,66 @@ class TileDetails(QWidget):
                 f"<b>TLE epoch:</b> {p['tle_epoch']:%d.%m.%Y %H:%M} {tz_abbr} ({age:.1f} days old){age_warn}"
             )
 
-        self.details_label.setText("<br>".join(lines))
+        self.details_box.setText("<br>".join(lines))
+
+    CSV_COLUMNS = (
+        ("Satellite", lambda p, tz: p.get("name", "")),
+        ("NORAD", lambda p, tz: p.get("norad", "")),
+        ("Favorite", lambda p, tz: p.get("favorite_name") or ""),
+        ("Status", lambda p, tz: PassTableModel.status_for(p)[0]),
+        ("Rise", lambda p, tz: _fmt_time(p.get("rise"))),
+        ("Rise azimuth", lambda p, tz: _fmt_num(p.get("rise_az"), 0)),
+        ("Rise direction", lambda p, tz: compass(p["rise_az"]) if "rise_az" in p else ""),
+        ("Culmination", lambda p, tz: _fmt_time(p.get("culm"))),
+        ("Culmination UTC", lambda p, tz: _fmt_time(p.get("culm_utc"))),
+        ("Max altitude", lambda p, tz: _fmt_num(p.get("max_alt"), 1)),
+        ("Culmination azimuth", lambda p, tz: _fmt_num(p.get("culm_az"), 0)),
+        ("Culmination direction", lambda p, tz: compass(p["culm_az"]) if "culm_az" in p else ""),
+        ("Set", lambda p, tz: _fmt_time(p.get("set"))),
+        ("Set azimuth", lambda p, tz: _fmt_num(p.get("set_az"), 0)),
+        ("Set direction", lambda p, tz: compass(p["set_az"]) if "set_az" in p else ""),
+        ("Duration s", lambda p, tz: PassTableModel.duration_seconds(p) or ""),
+        ("Time zone", lambda p, tz: tz),
+        ("Magnitude", lambda p, tz: _fmt_num(p.get("est_mag"), 1)),
+        ("Distance km", lambda p, tz: _fmt_num(p.get("distance_km"), 0)),
+        ("Height km", lambda p, tz: _fmt_num(p.get("height_km"), 0)),
+        ("Speed km/s", lambda p, tz: _fmt_num(p.get("speed_kms"), 2)),
+        ("Sun altitude", lambda p, tz: _fmt_num(p.get("sun_alt"), 1)),
+        ("Sunlit", lambda p, tz: "yes" if p.get("sunlit") else "no"),
+        ("Twilight", lambda p, tz: p.get("twilight", "")),
+        ("Cloud cover %", lambda p, tz: "" if p.get("cloud_cover") is None else p["cloud_cover"]),
+        ("Moon glare", lambda p, tz: "yes" if p.get("moon_glare") else "no"),
+        ("Reason", lambda p, tz: p.get("invisibility_reason", "")),
+        ("TLE age days", lambda p, tz: _fmt_num(p.get("tle_age_days"), 1)),
+    )
+
+    def export_csv(self):
+        passes = [self.pass_proxy.index(r, 0).data(PASS_ROLE) for r in range(self.pass_proxy.rowCount())]
+        if not passes:
+            return
+        default_name = f"passes_{self.lat:.3f}_{self.lon:.3f}_{datetime.now():%Y-%m-%d_%H%M}.csv"
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export passes to CSV", os.path.join(os.path.expanduser("~"), default_name), "CSV files (*.csv)"
+        )
+        if not path:
+            return
+        try:
+            with open(path, "w", newline="", encoding="utf-8-sig") as f:
+                writer = csv.writer(f)
+                writer.writerow([name for name, _ in self.CSV_COLUMNS])
+                for p in passes:
+                    writer.writerow([get(p, self.tz_name) for _, get in self.CSV_COLUMNS])
+        except OSError as e:
+            QMessageBox.warning(self, "Export failed", f"Could not save the CSV file:\n{e}")
+            return
+        self.sat_count_label.setText(f"Exported {len(passes)} passes to {os.path.basename(path)}")
 
     def open_3d(self):
-        if self.selected_pass:
-            self.view3d = SatView3D(self.selected_pass, self.lat, self.lon)
-            self.view3d.show()
-
-
-
-
-
-
-
-
-
-
-
+        if not self.selected_pass:
+            QMessageBox.warning(
+                self, "No satellite selected",
+                "Please select a satellite pass in the table first, then open the 3D globe.",
+            )
+            return
+        self.view3d = SatView3D(self.selected_pass, self.lat, self.lon)
+        self.view3d.show()

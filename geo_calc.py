@@ -9,7 +9,6 @@ _tf = None
 
 
 def get_timezone_finder():
-    """Lazy loader for TimezoneFinder instance."""
     global _tf
     if _tf is None:
         try:
@@ -21,14 +20,12 @@ def get_timezone_finder():
 
 
 def tile_to_latlon(row, col):
-    """Latitude and longitude of the tile center."""
     lon = -180 + (col + 0.5) / TILES_X * 360
     lat = 90 - (row + 0.5) / TILES_Y * 180
     return lat, lon
 
 
 def latlon_to_tile(lat, lon):
-    """Nearest map tile for a latitude and longitude."""
     row = int((90 - lat) / 180 * TILES_Y)
     col = int((lon + 180) / 360 * TILES_X)
     row = max(0, min(TILES_Y - 1, row))
@@ -37,7 +34,6 @@ def latlon_to_tile(lat, lon):
 
 
 def geocode_place(query: str):
-    """Look up a place name with the Open-Meteo geocoding API."""
     try:
         resp = requests.get(
             "https://geocoding-api.open-meteo.com/v1/search",
@@ -61,8 +57,48 @@ def geocode_place(query: str):
         return None
 
 
+def get_elevation(lat: float, lon: float) -> float:
+    try:
+        resp = requests.get(
+            "https://api.open-meteo.com/v1/elevation",
+            params={"latitude": lat, "longitude": lon},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return float((resp.json().get("elevation") or [0.0])[0])
+    except Exception as e:
+        print(f"Elevation lookup error for ({lat:.2f}, {lon:.2f}): {e}")
+        return 0.0
+
+
+def get_current_location():
+    try:
+        resp = requests.get("https://ipinfo.io/json", timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        lat, lon = (float(v) for v in data["loc"].split(","))
+        name, country = data.get("city") or "Current location", data.get("country", "")
+    except Exception as e:
+        print(f"ipinfo.io location error: {e}")
+        try:
+            resp = requests.get("https://ipapi.co/json/", timeout=10)
+            resp.raise_for_status()
+            data = resp.json()
+            lat, lon = float(data["latitude"]), float(data["longitude"])
+            name, country = data.get("city") or "Current location", data.get("country_name", "")
+        except Exception as e2:
+            print(f"ipapi.co location error: {e2}")
+            return None
+    return {
+        "name": name,
+        "country": country,
+        "latitude": lat,
+        "longitude": lon,
+        "elevation": get_elevation(lat, lon),
+    }
+
+
 def get_timezone_for_latlon(lat: float, lon: float):
-    """Derive local timezone (ZoneInfo or timezone object) and timezone name for lat/lon."""
     tf = get_timezone_finder()
     if tf:
         try:
@@ -78,7 +114,6 @@ def get_timezone_for_latlon(lat: float, lon: float):
             print(f"TimezoneFinder error for ({lat:.2f}, {lon:.2f}): {e}")
 
 
-
     
     offset_hours = int(round(lon / 15.0))
     offset_hours = max(-12, min(14, offset_hours))
@@ -88,10 +123,7 @@ def get_timezone_for_latlon(lat: float, lon: float):
     return tz, name
 
 
-
-
 def format_tz_name(dt: datetime) -> str:
-    """Return a clean timezone abbreviation (e.g. 'CEST', 'EDT', 'UTC+2')."""
     if dt is None:
         return ""
     z = dt.strftime("%Z")
@@ -108,7 +140,3 @@ def format_tz_name(dt: datetime) -> str:
     if minutes == 0:
         return f"UTC{sign}{hours}"
     return f"UTC{sign}{hours:02d}:{minutes:02d}"
-
-
-
-

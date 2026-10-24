@@ -53,7 +53,7 @@ Brightness of a satellite varies from one pass to another so the app recalculate
 For weather the app retrieves hourly cloud cover from Open-Meteo. It then takes the cloud cover for the hour when the bright satellite reaches its point in the sky.
 
 The world map is divided into around five thousand tiles. Each tile carries its latitude and longitude. This design lets you click anywhere, on the map without requiring a map library.
-## Credits
+## Sources
 
 - [CelesTrak](https://celestrak.org) — satellite orbit data
 - [Skyfield](https://rhodesmill.org/skyfield/) by Brandon Rhodes — orbit and astronomy calculations

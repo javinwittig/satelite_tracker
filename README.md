@@ -10,7 +10,17 @@ A desktop app that shows you which satellites will fly over any place on Earth i
 
 ## Quick start
 
-Download the version for your system from the [releases page](https://github.com/javinwittig/satelite_tracker/releases/latest), start it, and click anywhere on the world map.
+Download the version for your system from the [releases page](https://github.com/javinwittig/satelite_tracker/releases/latest), unpack it, start `SatelliteTracker`, and click anywhere on the world map. No Python needed.
+
+| System | File |
+|---|---|
+| Windows (64-bit) | `SatelliteTracker-windows-x64.zip` |
+| Linux (64-bit) | `SatelliteTracker-linux-x64.tar.gz` |
+| macOS (Apple Silicon, M1 and newer) | `SatelliteTracker-macos-arm64.zip` |
+
+- **macOS:** the app is not signed — right-click it and choose *Open* the first time.
+- **Linux:** some distributions also need the `libxcb-cursor0` package.
+- Downloaded data (orbits, weather, images) is cached in `~/.satellite_tracker`.
 
 Prefer to run from source? See [Run it locally](#run-it-locally).
 
@@ -37,11 +47,20 @@ Prefer to run from source? See [Run it locally](#run-it-locally).
 
 ```bash
 git clone https://github.com/javinwittig/satelite_tracker.git && cd satelite_tracker
-pip install PyQt6 skyfield numpy matplotlib requests pillow python-dotenv timezonefinder
+pip install -r requirements.txt
 python main.py
 ```
 
 No API keys are needed — all data sources used are free and open. `timezonefinder` is optional; without it, times fall back to a simpler time zone estimate.
+
+**Build the app yourself**
+
+```bash
+pip install pyinstaller
+pyinstaller satellite_tracker.spec
+```
+
+The result lands in `dist/` (a single executable on Windows and Linux, `SatelliteTracker.app` on macOS). PyInstaller only builds for the system it runs on, so the release binaries for all three systems are built by the GitHub Actions workflow in `.github/workflows/build.yml`.
 
 ## How it works
 
@@ -53,7 +72,7 @@ No API keys are needed — all data sources used are free and open. `timezonefin
 
 **Weather.** Hourly cloud cover from [Open-Meteo](https://open-meteo.com) is matched to the peak time of each pass, so the verdict reflects the sky at that moment, not a daily average.
 
-**The map.** The world map is cut into ~5,000 small tiles. Each tile is a button that knows its own latitude and longitude, which makes the whole map clickable without any map library.
+**The map.** The world map is cut into ~5,000 small tiles. Each tile knows its own latitude and longitude, which makes the whole map clickable without any map library.
 
 ## Credits
 

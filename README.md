@@ -25,13 +25,18 @@ Download the version for your system from the [releases page](https://github.com
 
 ## Features
 
-- **Click anywhere on the world map** or search by place name, or type exact latitude, longitude and elevation.
-- **Every pass in the next 48 hours** for ~170 bright satellites and space stations (ISS, Hubble, Tiangong and more), with rise, peak and set times in the local time zone of the selected location.
-- **"Can I see it?" verdict for each pass** — the app checks whether the sky is dark enough, the satellite is in sunlight, it's bright enough for the naked eye, and the sky isn't too cloudy. If a pass isn't visible, it tells you why.
-- **Estimated brightness (magnitude)** for every pass, so you know whether to expect a bright dot or a faint one.
-- **Cloud forecast and Moon conditions** — hourly cloud cover for each pass, plus a warning when a bright Moon sits close to the satellite's path.
-- **Filters** for visible-only, favorites, max. cloud cover, max. magnitude, and search by name or NORAD ID.
-- **3D globe view** of the satellite's ground track, plus a real NASA satellite photo of the area you picked.
+You pick a location by clicking on the world map. You can also search for a place or type in the coordinates and elevation yourself.
+
+The app then lists all passes of about 170 bright satellites over the next 48 hours, including the ISS, Hubble and Tiangong. Rise, peak and set times are shown in the local time of that place.
+
+For each pass it checks if you can actually see it. The sky has to be dark, the satellite has to be lit by the sun, it has to be bright enough and there shouldn't be too many clouds. If one of these doesn't fit, the app shows you which one.
+
+There's also:
+
+- an estimated brightness (magnitude) for every pass
+- the cloud forecast for the time of the pass, and a note when the moon is bright and close to the satellite's path
+- filters for visible passes, favorites, cloud cover and brightness, plus a search by name or NORAD ID
+- a 3D globe with the satellite's path and a NASA satellite photo of the area
 
 ![3D globe view of a satellite pass](assets/3D-view.png)
 

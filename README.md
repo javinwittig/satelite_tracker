@@ -4,7 +4,7 @@ I built a desktop app that shows you which satellites will fly over any place on
 
 ![Satellite Tracker – pass list for a selected location](assets/Detailedview.png)
 
-**[ Download the latest release](https://github.com/javinwittig/satelite_tracker/releases/latest)**
+**[⬇️ Download the latest release](https://github.com/javinwittig/satelite_tracker/releases/latest)**
 
 ---
 
@@ -18,7 +18,8 @@ Download the version for your system from the [releases page](https://github.com
 | Linux (64-bit) | `SatelliteTracker-linux-x64.tar.gz` |
 | macOS (Apple Silicon, M1 and newer) | `SatelliteTracker-macos-arm64.zip` |
 
-- **macOS:** the app is not signed, right-click it and choose *Open* the first time.
+- **Windows:** the app is not signed, so Windows may show "Windows protected your PC". Click *More info* and then *Run anyway*.
+- **macOS:** the app is not signed either, so macOS blocks it the first time you open it. Go to *System Settings → Privacy & Security*, scroll down and click *Open Anyway*. If macOS says the app is damaged, run `xattr -cr SatelliteTracker.app` in the Terminal and try again.
 - **Linux:** some distributions also need the `libxcb-cursor0` package.
 - Downloaded data (orbits, weather, images) is cached in `~/.satellite_tracker`.
 

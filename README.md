@@ -22,7 +22,6 @@ Download the version for your system from the [releases page](https://github.com
 - **Linux:** some distributions also need the `libxcb-cursor0` package.
 - Downloaded data (orbits, weather, images) is cached in `~/.satellite_tracker`.
 
-Prefer to run from source? See [Run it locally](#run-it-locally).
 
 ## Features
 
@@ -36,31 +35,6 @@ Prefer to run from source? See [Run it locally](#run-it-locally).
 
 ![3D globe view of a satellite pass](assets/3D-view.png)
 
-## Run it locally
-
-**Requirements**
-
-- Python 3.11 or newer (developed on 3.14)
-- An internet connection on first launch (orbit data, weather and the planet ephemeris are downloaded and cached)
-
-**Install and start**
-
-```bash
-git clone https://github.com/javinwittig/satelite_tracker.git && cd satelite_tracker
-pip install -r requirements.txt
-python main.py
-```
-
-No API keys are needed — all data sources used are free and open. `timezonefinder` is optional; without it, times fall back to a simpler time zone estimate.
-
-**Build the app yourself**
-
-```bash
-pip install pyinstaller
-pyinstaller satellite_tracker.spec
-```
-
-The result lands in `dist/` (a single executable on Windows and Linux, `SatelliteTracker.app` on macOS). PyInstaller only builds for the system it runs on, so the release binaries for all three systems are built by the GitHub Actions workflow in `.github/workflows/build.yml`.
 
 ## How it works
 

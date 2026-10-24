@@ -1,6 +1,6 @@
 # Satellite Tracker
 
-A desktop app that shows you which satellites will fly over any place on Earth in the next 48 hours — and whether you'll actually be able to see them with your own eyes.
+A desktop app that shows you which satellites will fly over any place on Earth in the next 48 hours and if you are able to see them with your own eyes.
 
 ![Satellite Tracker – pass list for a selected location](assets/Detailedview.png)
 

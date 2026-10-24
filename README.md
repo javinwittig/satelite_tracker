@@ -1,6 +1,6 @@
 # Satellite Tracker
 
-A desktop app that shows you which satellites will fly over any place on Earth in the next 48 hours and if you are able to see them with your own eyes.
+I built a desktop app that shows you which satellites will fly over any place on Earth in the next 48 hours and if you are able to see them with your own eyes.
 
 ![Satellite Tracker – pass list for a selected location](assets/Detailedview.png)
 
@@ -26,7 +26,7 @@ Prefer to run from source? See [Run it locally](#run-it-locally).
 
 ## Features
 
-- **Click anywhere on the world map** to pick a location — or search by place name, or type exact latitude, longitude and elevation.
+- **Click anywhere on the world map** or search by place name, or type exact latitude, longitude and elevation.
 - **Every pass in the next 48 hours** for ~170 bright satellites and space stations (ISS, Hubble, Tiangong and more), with rise, peak and set times in the local time zone of the selected location.
 - **"Can I see it?" verdict for each pass** — the app checks whether the sky is dark enough, the satellite is in sunlight, it's bright enough for the naked eye, and the sky isn't too cloudy. If a pass isn't visible, it tells you why.
 - **Estimated brightness (magnitude)** for every pass, so you know whether to expect a bright dot or a faint one.
@@ -83,4 +83,4 @@ The result lands in `dist/` (a single executable on Windows and Linux, `Satellit
 - [Mike McCants' Quicksat](https://www.mmccants.org) — standard satellite magnitudes
 - [PyQt6](https://www.riverbankcomputing.com/software/pyqt/) and [Matplotlib](https://matplotlib.org) — UI and 3D globe
 
-**AI usage:** I used [opencode](https://opencode.ai) occasionally when I was stuck on a problem and couldn't continue otherwise.
+**AI usage:** I used [opencode](https://opencode.ai) sometimes when I was stuck on a problem and couldn't continue otherwise.

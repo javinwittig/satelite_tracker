@@ -43,15 +43,15 @@ There's also:
 
 ## How it works
 
-**Orbits.** Current orbit data (TLEs) for visually bright satellites comes from [CelesTrak](https://celestrak.org) and is cached for 6 hours, since orbit predictions drift as the data ages. [Skyfield](https://rhodesmill.org/skyfield/) then calculates every pass that rises at least 10° above the horizon — lower passes are usually hidden by buildings, trees or haze.
+The orbit data for the bright satellites comes from [CelesTrak](https://celestrak.org). The app saves it for 6 hours and then downloads it again, because the predictions get less accurate the older the data is. With that data, [Skyfield](https://rhodesmill.org/skyfield/) calculates every pass that gets at least 10° above the horizon. Anything lower is usually hidden behind buildings or trees anyway.
 
-**Visibility.** A satellite doesn't glow on its own; you only see it when it reflects sunlight while *you* are standing in darkness. So for every pass the app checks two things at the same moment: whether the Sun is at least 6° below your horizon (end of civil twilight) and whether the satellite is still outside Earth's shadow. Only when both are true can it be seen at all.
+Satellites don't glow by themselves. You can only see one when the sun is shining on it while it's already dark where you are. So for each pass the app checks if the sun is at least 6° below your horizon and if the satellite is outside of Earth's shadow at that moment. If either one isn't true, you won't see it.
 
-**Brightness.** Instead of a fixed brightness per satellite, the app estimates the apparent magnitude for each individual pass. It starts with the satellite's standard magnitude (from the McCants Quicksat catalogue), then corrects for distance, the angle between Sun, satellite and observer (a satellite lit from the side looks much dimmer than one lit from behind you), and how much air the light has to travel through near the horizon. Anything brighter than magnitude 3.5 counts as visible to the naked eye — visible even from a city.
+How bright a satellite looks changes from pass to pass, so the app calculates it every time. It starts with the satellite's standard brightness from the McCants Quicksat catalogue and adjusts it for the distance, the angle of the sunlight and how much air the light has to go through when the satellite is low. If it comes out brighter than magnitude 3.5, it counts as visible with the naked eye, even in a city.
 
-**Weather.** Hourly cloud cover from [Open-Meteo](https://open-meteo.com) is matched to the peak time of each pass, so the verdict reflects the sky at that moment, not a daily average.
+For the weather, the app gets the hourly cloud cover from [Open-Meteo](https://open-meteo.com) and uses the hour when the satellite is highest in the sky.
 
-**The map.** The world map is cut into ~5,000 small tiles. Each tile knows its own latitude and longitude, which makes the whole map clickable without any map library.
+The world map is split into about 5,000 small tiles, and each one has its own latitude and longitude. That's how you can click anywhere on the map without needing a map library.
 
 ## Credits
 
